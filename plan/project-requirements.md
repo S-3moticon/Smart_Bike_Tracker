@@ -34,3 +34,6 @@ Simple page app with:
 
  - The app should use a pallete easy for the eyes, e.g. Matte color. 
  - The theme should not be a hardcoded colors and sizes in the widgets themselves, instead it should be done by setting 'theme' and 'MaterialApp.
+
+
+ sample git 
