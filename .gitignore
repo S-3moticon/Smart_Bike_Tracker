@@ -45,4 +45,4 @@ app.*.map.json
 /android/app/release
 
 # user rule
-/home/smileemoticon/Documents/Programming/smart_bike_tracker/plan
+/plan
