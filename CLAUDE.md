@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Smart Bike Tracker is a Flutter mobile application for a bike anti-theft tracking system. The app connects to an ESP32 MCU via Bluetooth Low Energy to monitor bike location and provide real-time tracking capabilities.
 
+A complete plan for the project has been written to /req/@plan.md
+
 ## Essential Commands
 
 ### Development
