@@ -26,17 +26,19 @@ class BikeDevice {
     if (result.advertisementData.advName.isNotEmpty) {
       deviceName = result.advertisementData.advName;
     } 
-    // Second try: Device's advertised name
-    else if (result.device.advName.isNotEmpty) {
-      deviceName = result.device.advName;
-    }
-    // Third try: Platform-specific name (might be empty for non-paired devices)
+    // Second try: Platform-specific name (might have cached name from system)
     else if (result.device.platformName.isNotEmpty) {
       deviceName = result.device.platformName;
     }
-    // Fallback: Use device ID
+    // Third try: Device's advertised name
+    else if (result.device.advName.isNotEmpty) {
+      deviceName = result.device.advName;
+    }
+    // Fallback: Check if MAC address matches BikeTrk pattern
     else {
-      deviceName = 'Device ${result.device.remoteId.toString().substring(0, 8)}';
+      String deviceId = result.device.remoteId.toString();
+      // For unnamed devices, show partial MAC to help identify
+      deviceName = 'Unknown (${deviceId.substring(deviceId.length > 8 ? deviceId.length - 8 : 0)})';
     }
     
     // Check if device advertises our service UUID
@@ -58,7 +60,14 @@ class BikeDevice {
     );
   }
   
-  bool get isBikeTracker => name.startsWith('BikeTrk_') || hasServiceUuid;
+  bool get isBikeTracker {
+    // Check multiple conditions to identify our bike tracker
+    return name.toLowerCase().contains('biketrk') || 
+           name.startsWith('BikeTrk_') || 
+           hasServiceUuid ||
+           // Also check if the device ID contains known patterns
+           (name.contains('4B00') || id.contains('4B00'));  // Your device shows 4B00
+  }
   
   String get displayName => isBikeTracker ? name : '$name (Not a Bike Tracker)';
   

@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/bike_device.dart';
 import '../models/location_data.dart';
 import '../models/device_status.dart';
@@ -45,6 +47,15 @@ class BikeBluetoothService {
         return false;
       }
       
+      // Request Bluetooth permissions for Android 12+
+      if (Platform.isAndroid) {
+        final permissions = await _requestBluetoothPermissions();
+        if (!permissions) {
+          developer.log('Bluetooth permissions not granted', name: 'BLE');
+          return false;
+        }
+      }
+      
       final state = await FlutterBluePlus.adapterState.first;
       return state == BluetoothAdapterState.on;
     } catch (e) {
@@ -53,46 +64,84 @@ class BikeBluetoothService {
     }
   }
   
+  Future<bool> _requestBluetoothPermissions() async {
+    try {
+      // Check Android version
+      if (Platform.isAndroid) {
+        // For Android 12+ (API 31+), we need BLUETOOTH_SCAN and BLUETOOTH_CONNECT
+        Map<Permission, PermissionStatus> statuses = await [
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+          Permission.location,  // Still needed for BLE scanning
+        ].request();
+        
+        bool allGranted = true;
+        statuses.forEach((permission, status) {
+          developer.log('Permission ${permission.toString()}: ${status.toString()}', name: 'BLE');
+          if (!status.isGranted) {
+            allGranted = false;
+          }
+        });
+        
+        return allGranted;
+      }
+      return true;
+    } catch (e) {
+      developer.log('Error requesting Bluetooth permissions: $e', name: 'BLE');
+      // If permission_handler doesn't recognize the permissions (older Android), continue
+      return true;
+    }
+  }
+  
   Future<void> startScan({Duration timeout = const Duration(seconds: 10)}) async {
     try {
       _discoveredDevices.clear();
       _scanResultsController.add([]);
       
-      // Scan with service UUID filter as fallback (optional)
-      // This helps find devices advertising our specific service
+      developer.log('Starting BLE scan...', name: 'BLE');
+      
+      // Stop any existing scan first
+      await FlutterBluePlus.stopScan();
+      
+      // Start scan without service filter to ensure we see all devices
       await FlutterBluePlus.startScan(
         timeout: timeout,
         androidScanMode: AndroidScanMode.lowLatency,
-        // withServices: [Guid(BleProtocol.serviceUuid)], // Uncomment to filter by service
+        // Remove service filter to see all devices including our ESP32
+        // withServices: [Guid(BleProtocol.serviceUuid)],
       );
       
       _scanSubscription?.cancel();
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         _discoveredDevices.clear();
         
+        developer.log('Scan results received: ${results.length} devices', name: 'BLE');
+        
         for (var result in results) {
           final device = BikeDevice.fromScanResult(result);
           
-          // Log device details for debugging
+          // Enhanced logging for debugging
           developer.log(
-            'Scanned device: name="${device.name}", '
+            'Device found: name="${device.name}", '
+            'advName="${result.advertisementData.advName}", '
+            'platformName="${result.device.platformName}", '
             'id=${device.id}, '
             'rssi=${device.rssi}, '
-            'isBikeTracker=${device.isBikeTracker}',
+            'isBikeTracker=${device.isBikeTracker}, '
+            'services=${result.advertisementData.serviceUuids}',
             name: 'BLE',
           );
           
-          // Add all devices with non-empty names
-          if (device.name.isNotEmpty) {
-            final existingIndex = _discoveredDevices.indexWhere(
-              (d) => d.id == device.id,
-            );
-            
-            if (existingIndex >= 0) {
-              _discoveredDevices[existingIndex] = device;
-            } else {
-              _discoveredDevices.add(device);
-            }
+          // Add all devices, even those without names (might be our ESP32)
+          // The ESP32 might not always broadcast its name in advertisement
+          final existingIndex = _discoveredDevices.indexWhere(
+            (d) => d.id == device.id,
+          );
+          
+          if (existingIndex >= 0) {
+            _discoveredDevices[existingIndex] = device;
+          } else {
+            _discoveredDevices.add(device);
           }
         }
         
