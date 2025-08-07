@@ -58,9 +58,12 @@ class BikeBluetoothService {
       _discoveredDevices.clear();
       _scanResultsController.add([]);
       
+      // Scan with service UUID filter as fallback (optional)
+      // This helps find devices advertising our specific service
       await FlutterBluePlus.startScan(
         timeout: timeout,
         androidScanMode: AndroidScanMode.lowLatency,
+        // withServices: [Guid(BleProtocol.serviceUuid)], // Uncomment to filter by service
       );
       
       _scanSubscription?.cancel();
@@ -69,6 +72,17 @@ class BikeBluetoothService {
         
         for (var result in results) {
           final device = BikeDevice.fromScanResult(result);
+          
+          // Log device details for debugging
+          developer.log(
+            'Scanned device: name="${device.name}", '
+            'id=${device.id}, '
+            'rssi=${device.rssi}, '
+            'isBikeTracker=${device.isBikeTracker}',
+            name: 'BLE',
+          );
+          
+          // Add all devices with non-empty names
           if (device.name.isNotEmpty) {
             final existingIndex = _discoveredDevices.indexWhere(
               (d) => d.id == device.id,
@@ -89,7 +103,7 @@ class BikeBluetoothService {
         });
         
         _scanResultsController.add(List.from(_discoveredDevices));
-        developer.log('Found ${_discoveredDevices.length} devices, ${_discoveredDevices.where((d) => d.isBikeTracker).length} bike trackers', name: 'BLE');
+        developer.log('Found ${_discoveredDevices.length} visible devices, ${_discoveredDevices.where((d) => d.isBikeTracker).length} bike trackers', name: 'BLE');
       });
     } catch (e) {
       developer.log('Error starting scan: $e', name: 'BLE', error: e);
