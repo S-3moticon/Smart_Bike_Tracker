@@ -347,8 +347,6 @@ void loop() {
   if (deviceConnected && !oldDeviceConnected) {
     oldDeviceConnected = deviceConnected;
   }
-  //comment
   // Small delay to prevent watchdog timer issues
-  //somehitng
   delay(10);
 }
