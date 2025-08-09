@@ -3,12 +3,12 @@ I want to build a simple Bike Anti Theft tracking app connected to a Micro Contr
 # Smart Bike Tracker
 
 ## Project Overview
-    The goal of this project is to develop a Smart Bike Tracker that provides real-time location tracking and improves bike security through sensor-based monitoring and cloud connectivity. It will use an accelerometer to detect irregular movements such as shaking, tilting, or sudden motion, which may indicate theft or tampering. An infrared sensor will help identify if a person is near the bike by allowing the system to recognize movement without a rider. If suspicious activity is detected, the device can send alerts to the user. The tracker also will include a GPS module for accurate location tracking, a SIM module for internet connection, and Bluetooth for access to a mobile app. The tracking app is designed for users to view the bike’s real-time location, receive alerts, manage device settings, and access travel history. All data is uploaded to Firebase, allowing users to monitor their bike remotely and receive important notifications.
+  The goal of this project is to develop a Smart Bike Tracker that provides real-time location tracking and improves bike security through sensor-based monitoring and cloud connectivity. It will use an accelerometer to detect irregular movements such as shaking, tilting, or sudden motion, which may indicate theft or tampering. An infrared sensor will help identify if a person is near the bike by allowing the system to recognize movement without a rider. If suspicious activity is detected, the device can send alerts to the user. The tracker also will include a GPS module for accurate location tracking, a SIM module for internet connection, and Bluetooth for access to a mobile app. The tracking app is designed for users to view the bike’s real-time location, receive alerts, manage device settings, and access travel history. All data is uploaded to Firebase, allowing users to monitor their bike remotely and receive important notifications.
 
 ## Key Features
 
 ### Battery Duration:
-    The smart bike tracker will feature a 24-hour battery life, ensuring it can track the bike throughout the day without requiring frequent recharging.
+  The smart bike tracker will feature a 24-hour battery life, ensuring it can track the bike throughout the day without requiring frequent recharging.
 
 ### Location Tracking:
 
