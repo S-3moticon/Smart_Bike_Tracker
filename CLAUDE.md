@@ -104,9 +104,6 @@ dependencies:
   geolocator: ^latest
   permission_handler: ^latest
   
-  # Maps Integration
-  google_maps_flutter: ^latest
-  
   # State Management (choose one)
   provider: ^latest  # or riverpod, bloc, getx
   
@@ -140,12 +137,6 @@ dependencies:
 <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 <string>This app needs location access to track your bike in background</string>
 ```
-
-### Google Maps API Setup
-1. Obtain API key from Google Cloud Console
-2. Add to Android: `android/app/src/main/AndroidManifest.xml`
-3. Add to iOS: `ios/Runner/AppDelegate.swift`
-4. Store API key securely (use environment variables or secure storage)
 
 ## Hardware Integration Protocol
 
@@ -242,7 +233,7 @@ The app interfaces with:
 Currently initialized with Flutter template. Core bike tracking functionality needs to be implemented including:
 - BLE communication service with ESP32
 - Dual-source location tracking (phone GPS when connected, SIM7070G when disconnected)
-- Google Maps integration for location display
+- Offline Maps integration for location display
 - SMS alert configuration interface
 - Location permission handling
 - Offline operation capability
