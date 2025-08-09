@@ -239,3 +239,4 @@ Currently initialized with Flutter template. Core bike tracking functionality ne
 - Offline operation capability
 
 Detailed requirements are in `/req/plan-requirement.md`.
+Always check PLAN.md before proceeding.
