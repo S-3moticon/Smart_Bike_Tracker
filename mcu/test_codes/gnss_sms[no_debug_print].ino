@@ -297,10 +297,9 @@ void setup() {
       sendATCommand("AT+CREG?", "OK");
       delay(2000);
       
-      // Compose user-friendly SMS message
-      String smsMessage = "GPS Location:\n";
-      smsMessage += "Copy & paste in Google Maps:\n";
-      smsMessage += lastGPSFix.latitude + "," + lastGPSFix.longitude;
+      // Compose SMS message in geo URI format
+      // This format is recognized by most mobile devices and opens directly in maps
+      String smsMessage = "geo:" + lastGPSFix.latitude + "," + lastGPSFix.longitude;
       
       // Attempt SMS sending with retries
       bool smsSent = false;
