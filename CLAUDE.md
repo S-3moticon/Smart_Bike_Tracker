@@ -223,10 +223,10 @@ flutter build appbundle --release
 ## Hardware Context
 
 The app interfaces with:
-- **ESP32 MCU** (main controller) - Handles BLE communication
-- **SIM7070G** (GPS/GNSS/SMS module) - Provides location when phone disconnected
-- **LSM6DSL** (motion sensor) - Detects movement/theft
-- **IR sensor** (human verification) - Confirms rider presence
+- **ESP32 MCU** (main controller) - Handles BLE communication and coordinates all sensors
+- **SIM7070G** (GPS/GNSS/SMS module) - Provides location when phone disconnected, sends SMS alerts
+- **LSM6DSL** (6-axis IMU: accelerometer/gyroscope) - Detects movement/theft through motion detection, tilt, and shock. Wake interrupt activates only when IR sensor detects no user
+- **HW-201 IR sensor** (human verification) - Confirms rider presence to distinguish authorized use from theft
 
 ## Project Status
 
