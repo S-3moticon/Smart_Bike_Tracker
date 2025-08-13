@@ -1,7 +1,9 @@
-# Smart Bike Tracker - Integrated 1-Week Sprint Plan
+# Smart Bike Tracker - Implementation Plan
 
-## Overview
-This plan covers the complete implementation of a Smart Bike Tracker system including both the ESP32 MCU firmware and Flutter mobile application. The system provides anti-theft tracking via BLE connection, dual-source GPS tracking, and SMS alerts.
+## Project Overview
+Smart Bike Tracker is a comprehensive anti-theft system combining ESP32 hardware with a Flutter mobile app. The system detects theft through motion sensors and IR presence detection, automatically sending SMS alerts with GPS coordinates when unauthorized movement is detected. It features dual-source GPS tracking (phone when BLE connected, SIM7070G when disconnected) and 24-hour battery operation.
+
+**Core Requirements Source:** `/req/requirement.md`
 
 ## Day 1: Project Setup & Protocol Definition ✅ COMPLETED
 
@@ -89,30 +91,41 @@ This plan covers the complete implementation of a Smart Bike Tracker system incl
   - ⚠️ I2C communication
   - ⚠️ Accelerometer configuration
   - ⚠️ Motion detection thresholds
-- ✅ Add IR sensor reading
+  - ⚠️ Wake interrupt configuration (only when IR detects no user)
+- ✅ Add IR sensor reading (HW-201)
   - ✅ Digital input configuration
   - ✅ Human presence detection logic
 
 ### App Tasks ⏳ PENDING
-- ⏳ Implement dual GPS logic
-  - ⏳ Use phone GPS when BLE connected
-  - ⏳ Switch to SIM7070G data when disconnected
-  - ⏳ Seamless transition between sources
+- ⏳ Implement dual GPS logic per requirements
+  - ⏳ Use phone GPS when BLE connected (MCU sleeps)
+  - ⏳ Display SIM7070G data when BLE disconnected
+  - ⏳ Show GPS source indicator (Phone/SIM7070G)
+  - ⏳ Display coordinates and last update time
 - ⏳ Setup location permissions
   - ⏳ Request fine location permission
   - ⏳ Handle permission denial gracefully
-  - ⏳ Background location for iOS
-- ⏳ Create LocationService class
+  - ⏳ Background location for continuous tracking
+- ⏳ Create LocationService class with dual-source support
 
 ## Day 4: Core Logic & Data Exchange ⚠️ PARTIALLY COMPLETED
 
 ### MCU Tasks ✅ COMPLETED
-- ✅ Implement theft detection algorithm
+- ✅ Implement theft detection algorithm per requirements
   ```
+  // Normal Operation
   if (BLE_connected && motion_detected && user_present) {
-    // Normal operation - light sleep
-  } else if (!BLE_connected && (motion_detected || !user_present)) {
-    // Theft detected - activate tracking
+    // ESP32 enters light sleep, app uses phone GPS
+  }
+  
+  // Anti-Theft Function
+  if (!BLE_connected && motion_detected && user_present) {
+    // Moving without BLE - send SMS alerts
+  }
+  
+  // Shock Detection
+  if (!BLE_connected && motion_detected && !user_present) {
+    // Movement detected without user - high alert
   }
   ```
 - ✅ Add SMS alert functionality
@@ -146,36 +159,36 @@ This plan covers the complete implementation of a Smart Bike Tracker system incl
 ## Day 5: Power Management & UI Implementation ⚠️ PARTIALLY COMPLETED
 
 ### MCU Tasks ⏳ PENDING
-- ⏳ Implement light sleep modes
-  - ⏳ Sleep when BLE connected and no motion
-  - ⏳ Wake on motion or BLE events
+- ⏳ Implement power management per requirements
+  - ⏳ Light sleep when BLE connected (phone GPS active)
+  - ⏳ Wake every 10 min (configurable) for SMS updates
   - ⏳ Maintain BLE connection during sleep
+  - ⏳ 24-hour operation with 14650 Li-ion battery
 - ⏳ Add wake interrupts
-  - ⏳ Motion interrupt from LSM6DSL
+  - ⏳ LSM6DSL motion interrupt (only when IR shows no user)
   - ⏳ BLE connection/disconnection events
-  - ⏳ Timer-based wake for GPS updates
-- ⏳ Optimize power consumption
-  - ⏳ Disable unused peripherals
-  - ⏳ Reduce GPS polling when stationary
+  - ⏳ Timer-based wake for GPS/SMS updates
+- ⏳ Optimize for battery life
+  - ⏳ Disable SIM7070G when BLE connected
+  - ⏳ Store GPS data internally when not sending
 
 ### App Tasks ✅ COMPLETED
-- ✅ Build single-page UI with Material Design
-  - ✅ Use matte color palette theme
+- ✅ Build single-page UI per requirements
+  - ✅ Use matte color palette theme (no hardcoded colors)
   - ✅ Implement flexible layouts with Flex widgets
   - ✅ Responsive design for various screen sizes
-  - ✅ HomeScreen with status, location, and config cards
-- ✅ Add phone number configuration
-  - ✅ Input field with validation
-  - ✅ Save to device via BLE
-  - ⏳ Persist locally with SharedPreferences
-- ✅ Implement update interval settings
-  - ✅ Slider for interval selection (10-300 seconds)
-  - ✅ Send configuration to ESP32
-  - ✅ Display formatted interval (seconds/minutes/hours)
-- ⚠️ Create location request button
-  - ✅ Manual location update trigger
-  - ✅ Loading state during request
-  - ⏳ Display address below map
+  - ✅ Single page with map, controls, and status display
+- ✅ Add configuration features
+  - ✅ Phone number input for SMS alerts
+  - ✅ Update interval slider (default: 10 minutes)
+  - ✅ Save configuration to ESP32 via BLE
+  - ⏳ Persist settings with SharedPreferences
+- ✅ Implement location features
+  - ✅ Custom offline map canvas (Tangram ES style)
+  - ✅ Current location display with marker
+  - ✅ Manual location update button
+  - ⏳ Location history log below map
+  - ⏳ Display coordinates, source, and timestamp
 
 ## Day 6: Integration & State Management ⏳ PENDING
 
@@ -286,60 +299,110 @@ This plan covers the complete implementation of a Smart Bike Tracker system incl
 
 ## Deliverables
 
-### MCU Firmware
-- ✅ ESP32 firmware with basic sensor integration
-- ✅ BLE GATT server implementation
-- ⏳ Power-optimized operation modes
-- ⚠️ SMS alert system via SIM7070G (placeholder ready)
-- ⏳ 24-hour battery operation capability
+### MCU Firmware (ESP32)
+- ✅ BLE GATT server with custom protocol
+- ✅ Theft detection algorithm implementation
+- ✅ IR sensor integration (HW-201) for user presence
+- ⚠️ SIM7070G GPS/SMS module (basic integration)
+- ⏳ LSM6DSL accelerometer integration
+- ⏳ Power optimization for 24-hour operation
+- ⏳ Light sleep mode when BLE connected
+- ⏳ SMS alerts with GPS coordinates
 
-### Mobile Application
-- ✅ Flutter app for Android and iOS
-- ✅ BLE connection management with auto-reconnect - TESTED & WORKING
-- ✅ Android 12+ Bluetooth permissions handling
-- ✅ Dual-source GPS tracking (Phone GPS when BLE connected, SIM7070G when disconnected)
-- ✅ Offline map visualization (no external API needed)
-- ✅ Phone number and interval configuration
-- ⚠️ Offline operation capability (partially ready)
+### Mobile Application (Flutter)
+- ✅ Single-page app with matte theme
+- ✅ BLE scanning and connection management
+- ✅ Android 12+ permission handling
+- ✅ Custom offline map canvas
+- ✅ Phone number configuration for SMS
+- ✅ Update interval settings (10 min default)
+- ⏳ Dual-source GPS display (Phone/SIM7070G)
+- ⏳ Location history log
+- ⏳ Coordinates and timestamp display
+- ⏳ SharedPreferences for settings persistence
 
 ### System Integration
-- ⚠️ Working anti-theft detection system (basic implementation)
+- ✅ BLE communication protocol established
+- ✅ Basic theft detection logic
 - ⏳ Seamless GPS source switching
-- ✅ Reliable BLE communication - VERIFIED with real hardware (Day 8)
-- ⏳ SMS alerts when device stolen
-- ⚠️ Real-time location tracking (BLE data ready, GPS pending)
+- ⏳ SMS alerts when theft detected
+- ⏳ 24-hour battery operation
+- ⏳ Complete sensor integration
 
-## Current Status Summary (Updated: 2025-08-07)
+## Current Status Summary (Updated: 2025-08-13)
 
-### ✅ Completed (Days 1-2 + partial Day 3-5 + Day 8 fixes)
-- Full project setup and BLE protocol definition
-- MCU: BLE server, theft detection, basic sensors
-- App: BLE client, scanning UI, home screen, configuration UI
-- Data models and BLE communication
-- **Day 8 (2025-08-07)**: Fixed Android 12+ BLE permission issues
-  - Added runtime Bluetooth permission requests (BLUETOOTH_SCAN, BLUETOOTH_CONNECT)
-  - Improved device name detection logic
-  - Enhanced BLE scanning with better error handling
-  - Successfully established MCU-App BLE connection
+### ✅ Completed Components
+
+#### MCU (ESP32) - mcu/bike_tracker_esp32/
+- BLE GATT server with custom protocol
+- Basic theft detection algorithm
+- IR sensor integration for user presence
+- Device state machine (IDLE, TRACKING, ALERT, SLEEP)
+- SIM7070G GPS module basic integration
+- Configuration reception from app
+
+#### Mobile App (Flutter) - lib/
+- BLE scanning and connection management
+- Android 12+ runtime permissions
+- Custom offline map canvas widget
+- Phone number configuration UI
+- SMS interval settings (10-300 seconds)
+- Single-page responsive design
+- Matte color theme implementation
+- Auto-reconnection logic
 
 ### ⚠️ In Progress
-- Location services and GPS integration
-- Google Maps implementation (API key needed)
-- Power management optimization
+- LSM6DSL accelerometer integration (I2C setup needed)
+- SMS alert implementation with retry logic
+- Dual-source GPS tracking in app
 
-### ⏳ Pending
-- Provider state management
-- SharedPreferences persistence
-- Full system integration testing
-- Documentation and deployment guides
+### ⏳ Pending Implementation
 
-## Key Milestones
-- **Day 2 EOD**: ✅ BLE communication established between MCU and App
-- **Day 3 EOD**: ⚠️ All sensors integrated (LSM6DSL pending), GPS partially ready
-- **Day 4 EOD**: ⚠️ Theft detection logic complete, SMS alerts pending full implementation
-- **Day 5 EOD**: ⚠️ Power management pending, UI ✅ complete
-- **Day 6 EOD**: ⏳ Full system integration with state management
-- **Day 7 EOD**: ⏳ Tested, optimized, and documented system
+#### MCU Tasks
+- Complete LSM6DSL motion sensor setup
+- Implement wake interrupts (motion + BLE events)
+- Add power management and sleep modes
+- SMS sending with GPS coordinates
+- Battery level monitoring
+- Configuration persistence in flash
+
+#### App Tasks
+- Implement phone GPS tracking when BLE connected
+- Display GPS source indicator (Phone/SIM7070G)
+- Add location history log below map
+- Show coordinates and timestamp
+- SharedPreferences for settings persistence
+- Provider state management integration
+
+#### System Integration
+- Test complete theft detection scenarios
+- Verify GPS source switching
+- Validate SMS alert delivery
+- Ensure 24-hour battery operation
+- Full end-to-end testing
+
+## Implementation Priorities
+
+### High Priority (Core Functionality)
+1. ⏳ Complete LSM6DSL accelerometer integration
+2. ⏳ Implement dual-source GPS tracking in app
+3. ⏳ Complete SMS alert system with SIM7070G
+4. ⏳ Add location history logging in app
+5. ⏳ Implement power management for 24-hour operation
+
+### Medium Priority (User Experience)
+1. ⏳ Add SharedPreferences for settings persistence
+2. ⏳ Display GPS source indicator in UI
+3. ⏳ Show coordinates and timestamp in app
+4. ⏳ Improve offline map visualization
+5. ⏳ Add location history scrollable list
+
+### Low Priority (Optimization)
+1. ⏳ Fine-tune motion detection thresholds
+2. ⏳ Optimize BLE connection stability
+3. ⏳ Improve battery consumption
+4. ⏳ Add error recovery mechanisms
+5. ⏳ Create comprehensive documentation
 
 ## Risk Mitigation
 - **BLE Connection Issues**: ✅ RESOLVED - Fixed Android 12+ permissions (Day 8)
@@ -351,11 +414,14 @@ This plan covers the complete implementation of a Smart Bike Tracker system incl
 - **SMS Delivery**: ⚠️ Basic implementation ready, needs retry mechanism
 - **Integration Delays**: ✅ BLE integration tested and working
 
-## Success Criteria
-1. ✅ ESP32 can detect theft (BLE disconnect + motion)
-2. ⚠️ SMS alerts sent with accurate GPS location (partial)
-3. ⏳ App displays real-time location on map
-4. ⏳ System operates for 24 hours on battery
-5. ⏳ Seamless GPS source switching
-6. ✅ User can configure phone number and update interval
-7. ✅ Reliable BLE connection with auto-reconnect - VERIFIED WORKING (Day 8)
+## Success Criteria (Per Requirements)
+1. ✅ Theft Detection: ESP32 detects [BLE=False | Motion=True | User=True/False]
+2. ⚠️ SMS Alerts: Send GPS coordinates to configured number (partial)
+3. ⏳ Dual GPS Sources: Phone GPS when connected, SIM7070G when disconnected
+4. ⏳ Battery Life: 24-hour operation with 14650 Li-ion battery
+5. ⏳ Power Management: MCU sleeps when BLE connected
+6. ✅ Configuration: Phone number and SMS interval settings via app
+7. ✅ BLE Communication: Reliable connection with auto-reconnect
+8. ⏳ Location Display: Offline map with coordinates, source, and timestamp
+9. ⏳ Location History: Scrollable log of previous locations
+10. ⏳ Human Verification: IR sensor distinguishes authorized use from theft

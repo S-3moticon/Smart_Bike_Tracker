@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Smart Bike Tracker is a Flutter mobile application for a bike anti-theft tracking system. The app connects to an ESP32 MCU via Bluetooth Low Energy to monitor bike location and provide real-time tracking capabilities.
+Smart Bike Tracker is a comprehensive bike anti-theft system combining an ESP32-based hardware tracker with a Flutter mobile application. The system provides real-time location tracking, sensor-based theft detection, and automated SMS alerts. The tracker uses motion sensors and infrared detection to identify potential theft scenarios, switching between phone GPS (when connected via BLE) and onboard SIM7070G GPS module (when disconnected) for continuous tracking.
 
-A complete plan for the project has been written to /req/@plan.md
+**Project Documentation:**
+- Requirements: `/req/requirement.md`
+- Implementation Plan: `/PLAN.md`
 
 ## Essential Commands
 
@@ -67,29 +69,42 @@ lib/
 ### Core App Requirements
 The app integrates with hardware components (ESP32, GPS module, sensors) via BLE and must:
 - Operate offline without internet connectivity
-- Display GPS location on Google Maps
-- Allow phone number configuration for SMS alerts
-- Manage location update intervals
+- Display GPS location on custom map canvas (Tangram ES or similar offline solution)
+- Allow phone number configuration for SMS alerts with configurable intervals
+- Manage dual-source GPS tracking (phone GPS when BLE connected, SIM7070G when disconnected)
+- Display location coordinates, source, and last update time
+- Maintain location history log
+- Support single-page design with intuitive controls
 
 ### Key Implementation Guidelines
 
 1. **Bluetooth Integration**: 
    - Establish BLE connection with ESP32 MCU for all device communication
    - Handle connection states (connecting, connected, disconnected)
-   - Implement reconnection logic for dropped connections
+   - Implement auto-reconnection logic for dropped connections
+   - Scan and filter devices with "BikeTrk_" prefix
 
 2. **Location Services**: 
-   - When Bluetooth connection is TRUE: Use phone's GPS (request location permissions)
-   - When Bluetooth connection is FALSE: GPS data comes from SIM7070G module via the ESP32
+   - When BLE = TRUE: Use phone's GPS, MCU enters light sleep mode
+   - When BLE = FALSE: Receive GPS data from SIM7070G module via ESP32
+   - Display coordinates, source (Phone/SIM7070G), and last update timestamp
    - Implement seamless switching between GPS sources
+   - Maintain location history in scrollable log
 
-3. **UI Design**: 
-   - Use matte color palette with theme-based styling (avoid hardcoded colors)
+3. **Theft Detection Logic**: 
+   - Normal Operation: [BLE = True | Motion = True | User = True]
+   - Anti-Theft Mode: [BLE = False | Motion = True | User = True]
+   - Shock Detection: [BLE = False | Motion = True | User = False]
+   - MCU sends SMS alerts when theft conditions are met
+
+4. **UI Design**: 
+   - Single-page application with map, controls, and status display
+   - Use matte color palette with theme-based styling (no hardcoded colors)
    - Implement small composable widgets with flex layouts
-   - Follow Material Design guidelines for Android, Cupertino for iOS
+   - Custom offline map canvas for location visualization
 
-4. **Logging**: 
-   - Use `dart:developer` log instead of print statements for debugging
+5. **Logging**: 
+   - Use `dart:developer` log instead of print statements
    - Implement different log levels (debug, info, warning, error)
 
 ## Required Dependencies
@@ -98,20 +113,24 @@ Add these packages to pubspec.yaml:
 ```yaml
 dependencies:
   # BLE Communication
-  flutter_blue_plus: ^latest  # or flutter_bluetooth_serial
+  flutter_blue_plus: ^1.32.12  # BLE device communication
   
   # Location Services
-  geolocator: ^latest
-  permission_handler: ^latest
+  geolocator: ^13.0.2  # Phone GPS access
+  permission_handler: ^11.3.1  # Runtime permissions
   
-  # State Management (choose one)
-  provider: ^latest  # or riverpod, bloc, getx
+  # Maps (Offline Solution)
+  # Consider: Tangram ES or custom canvas implementation
+  # Currently using custom canvas map widget
+  
+  # State Management
+  provider: ^6.1.2  # State management solution
   
   # Local Storage
-  shared_preferences: ^latest
+  shared_preferences: ^2.3.3  # Persistent settings
   
   # Utilities
-  url_launcher: ^latest  # For SMS functionality
+  url_launcher: ^latest  # For SMS functionality (optional)
 ```
 
 ## Platform Configuration
@@ -151,21 +170,32 @@ dependencies:
 
 ### Data Exchange Format
 ```dart
-// Expected GPS data format from ESP32
+// GPS data from ESP32 (when BLE disconnected)
 {
   "lat": double,
   "lng": double,
   "timestamp": int,
   "speed": double,
   "satellites": int,
-  "battery": int
+  "battery": int,
+  "source": "SIM7070G"  // GPS source indicator
 }
 
 // Configuration data to ESP32
 {
-  "phone_number": String,
-  "update_interval": int, // seconds
-  "alert_enabled": bool
+  "phone_number": String,      // For SMS alerts
+  "update_interval": int,      // SMS interval in seconds (default: 600)
+  "alert_enabled": bool        // Enable/disable theft alerts
+}
+
+// Device status from ESP32
+{
+  "mode": String,              // IDLE, TRACKING, ALERT, SLEEP
+  "ble_connected": bool,
+  "motion_detected": bool,
+  "user_present": bool,        // IR sensor status
+  "battery_level": int,        // Percentage
+  "last_alert": int            // Timestamp of last SMS sent
 }
 ```
 
@@ -224,19 +254,48 @@ flutter build appbundle --release
 
 The app interfaces with:
 - **ESP32 MCU** (main controller) - Handles BLE communication and coordinates all sensors
-- **SIM7070G** (GPS/GNSS/SMS module) - Provides location when phone disconnected, sends SMS alerts
-- **LSM6DSL** (6-axis IMU: accelerometer/gyroscope) - Detects movement/theft through motion detection, tilt, and shock. Wake interrupt activates only when IR sensor detects no user
-- **HW-201 IR sensor** (human verification) - Confirms rider presence to distinguish authorized use from theft
+  - Enters light sleep when BLE connected to conserve battery
+  - Wakes on motion detection or disconnection events
+  - Manages 24-hour battery operation with 14650 Li-ion battery
+  
+- **SIM7070G** (GPS/GNSS/SMS module) - Provides location when phone disconnected
+  - Sends SMS alerts with GPS coordinates to configured phone number
+  - Updates location at configurable intervals (default: 10 minutes)
+  - Stores GPS data internally when BLE connected
+  
+- **LSM6DSL** (6-axis IMU: accelerometer/gyroscope) - Motion detection
+  - Detects irregular movements (shaking, tilting, sudden motion)
+  - Wake interrupt activates only when IR sensor detects no user
+  - Threshold-based detection for theft scenarios
+  
+- **HW-201 IR sensor** (human verification) - Presence detection
+  - Distinguishes between normal riding and potential theft
+  - Combined with accelerometer for accurate threat assessment
+  - Enables shock detection when no user present
 
 ## Project Status
 
-Currently initialized with Flutter template. Core bike tracking functionality needs to be implemented including:
-- BLE communication service with ESP32
-- Dual-source location tracking (phone GPS when connected, SIM7070G when disconnected)
-- Offline Maps integration for location display
-- SMS alert configuration interface
-- Location permission handling
-- Offline operation capability
+### Completed Features
+- ✅ BLE communication service with ESP32 (tested with real hardware)
+- ✅ Android 12+ Bluetooth permissions handling
+- ✅ Device scanning and connection UI
+- ✅ Custom offline map canvas for location display
+- ✅ SMS alert configuration interface (phone number & interval)
+- ✅ Basic theft detection algorithm in MCU
+- ✅ Data models and BLE protocol implementation
 
-Detailed requirements are in `/req/plan-requirement.md`.
-Always check `PLAN.md` before proceeding.
+### In Progress
+- ⚠️ Dual-source GPS tracking implementation
+- ⚠️ Location history logging
+- ⚠️ Power optimization for 24-hour operation
+
+### Pending
+- ⏳ Complete SMS alert system with SIM7070G
+- ⏳ LSM6DSL motion sensor integration
+- ⏳ State persistence with SharedPreferences
+- ⏳ Full system integration testing
+
+Detailed requirements: `/req/requirement.md`
+Implementation status: `/PLAN.md`
+
+Do not clear task at `/PLAN.md` automatically until confirmed by user
