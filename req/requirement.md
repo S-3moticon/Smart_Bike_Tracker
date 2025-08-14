@@ -47,8 +47,8 @@ I want to build a simple Bike Anti Theft tracking app connected to a Micro Contr
  3. Human Verification [IR sensor (HW-201 sensor)] [MCU Side]
  4. 24-hour long lasting operation [MCU side]
  5. SLEEP Function  (MCU when PHONE GPS is Used, only wake up When Theft function activates) [MCU side]
- 6. Anti-Theft Function [BLE = False | LSM6DSL = True | IR = True] [MCU side] (Moving without connected to BLE)
- 7. Shock Detection [BLE = False | LSM6DSL = True | IR = False ] [MCU side] (Detected movement without user or BLE)
+ 6. Anti-Theft Function [BLE = False | LSM6DSL = True | IR = True] [MCU side] (Moving without connected to BLE) Send SMS alerts with GPS Location.
+ 7. Shock Detection [BLE = False | LSM6DSL = True | IR = False ] [MCU side] (Detected movement without user or BLE) Send SMS Potential tampering alert with GPS Location.
 
 ## MCU function Algorithm:
  1. Initialize the MCU.
