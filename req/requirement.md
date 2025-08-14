@@ -103,7 +103,7 @@ The should app should be built with flutter and have the following features:
 ## Location Column
   - A Map should be displayed which can be monitored and tracked with a custom map canvas with a basic background template of a map [Tangram ES] for easier visual of the location.
  
- - The Location column should display the value of coordinates, source, and last update of GPS data from the device. [DO NOT GET DATA FROM MCU, LET IT ON SLEEP MODE].
+ - The Location column should display the value of coordinates, source, and last update of GPS data from the device, Only the mentioned data should be shown. [DO NOT GET DATA FROM MCU, LET IT ON SLEEP MODE].
 
  - When getting location from the phone the user should be able to monitor its curernt location updates without requesting. 
 
