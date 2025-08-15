@@ -3,4 +3,4 @@
  1. Haven't Tested yet 
 
 ## Application
- 1. Haven't Tested yet 
+ 1. Map displays and loaded tiles properly now.

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../services/bluetooth_service.dart' as bike_ble;
 import '../services/location_service.dart';
+import '../models/bike_device.dart';
 import '../models/location_data.dart';
-import '../models/device_status.dart';
-import '../models/tracker_config.dart';
+import '../widgets/location_map.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,259 +15,290 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final bike_ble.BikeBluetoothService _bleService = bike_ble.BikeBluetoothService();
   final LocationService _locationService = LocationService();
-  final TextEditingController _phoneController = TextEditingController();
   
+  BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
+  bool _isScanning = false;
+  bool _isAutoConnecting = false;
+  List<BikeDevice> _availableDevices = [];
+  String? _connectingDeviceId;
+  Map<String, String>? _savedDevice;
+  bool _autoConnectEnabled = true;
+  
+  // Location tracking
+  final List<LocationData> _locationHistory = [];
+  bool _isTrackingLocation = false;
   LocationData? _currentLocation;
-  DeviceStatus? _deviceStatus;
-  BluetoothConnectionState _connectionState = BluetoothConnectionState.connected;
-  int _updateInterval = 30;
-  bool _alertEnabled = true;
-  bool _isUpdatingConfig = false;
   
-  GoogleMapController? _mapController;
-  final Set<Marker> _markers = {};
-  bool _isMapReady = false;
+  // Tab controller for map/list view
+  late TabController _tabController;
   
-  StreamSubscription? _locationSubscription;
-  StreamSubscription? _statusSubscription;
   StreamSubscription? _connectionSubscription;
-  StreamSubscription? _phoneLocationSubscription;
+  StreamSubscription? _scanSubscription;
+  StreamSubscription? _locationSubscription;
   
   @override
   void initState() {
     super.initState();
-    _setupListeners();
-    _requestInitialData();
-    _initializeLocationService();
-  }
-  
-  Future<void> _initializeLocationService() async {
-    await _locationService.initialize();
-    
-    _phoneLocationSubscription = _locationService.locationStream.listen((location) {
-      if (mounted) {
-        setState(() {
-          _currentLocation = location;
-          _updateMapMarker(location);
-        });
-      }
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      setState(() {}); // Rebuild to show/hide clear button
     });
+    _setupListeners();
+    _initializeAndAutoConnect();
   }
   
   void _setupListeners() {
-    _locationSubscription = _bleService.locationData.listen((location) {
-      setState(() {
-        _currentLocation = location;
-      });
-      developer.log('Location updated: ${location.formattedCoordinates}', name: 'HomeScreen');
-    });
-    
-    _statusSubscription = _bleService.deviceStatus.listen((status) {
-      setState(() {
-        _deviceStatus = status;
-      });
-      developer.log('Status updated: ${status.mode.value}', name: 'HomeScreen');
-    });
-    
     _connectionSubscription = _bleService.connectionState.listen((state) {
       setState(() {
         _connectionState = state;
+        _isAutoConnecting = false;
+        if (state == BluetoothConnectionState.connected) {
+          _connectingDeviceId = null;
+          _availableDevices.clear();
+          // Start location tracking when connected
+          _startLocationTracking();
+        } else if (state == BluetoothConnectionState.disconnected) {
+          _connectingDeviceId = null;
+          // Stop location tracking when disconnected
+          _stopLocationTracking();
+          _checkBluetoothAndScan();
+        }
       });
-      
-      if (state == BluetoothConnectionState.disconnected && mounted) {
-        Navigator.of(context).pushReplacementNamed('/');
-      }
+    });
+    
+    _scanSubscription = _bleService.scanResults.listen((devices) {
+      setState(() {
+        _availableDevices = devices.where((d) => d.isBikeTracker).toList();
+      });
+    });
+    
+    // Location updates listener
+    _locationSubscription = _locationService.locationStream.listen((location) {
+      setState(() {
+        _currentLocation = location;
+        _locationHistory.insert(0, location); // Add to beginning for newest first
+        // Keep only last 100 locations
+        if (_locationHistory.length > 100) {
+          _locationHistory.removeLast();
+        }
+      });
     });
   }
   
-  Future<void> _requestInitialData() async {
-    final location = await _bleService.requestLocation();
-    final status = await _bleService.requestStatus();
+  Future<void> _startLocationTracking() async {
+    setState(() {
+      _isTrackingLocation = true;
+    });
+    await _locationService.startLocationTracking();
+    developer.log('Location tracking started', name: 'HomeScreen');
+  }
+  
+  Future<void> _stopLocationTracking() async {
+    setState(() {
+      _isTrackingLocation = false;
+    });
+    await _locationService.stopLocationTracking();
+    developer.log('Location tracking stopped', name: 'HomeScreen');
+  }
+  
+  Future<void> _initializeAndAutoConnect() async {
+    // Load saved device info
+    _savedDevice = await _bleService.getLastConnectedDevice();
+    _autoConnectEnabled = await _bleService.isAutoConnectEnabled();
     
-    if (mounted) {
+    setState(() {});
+    
+    // Check Bluetooth availability
+    final available = await _bleService.checkBluetoothAvailability();
+    if (!available) return;
+    
+    // Try auto-connect if enabled and has saved device
+    if (_autoConnectEnabled && _savedDevice != null) {
       setState(() {
-        _currentLocation = location;
-        _deviceStatus = status;
+        _isAutoConnecting = true;
       });
+      
+      final connected = await _bleService.tryAutoConnect();
+      
+      if (!connected && mounted) {
+        setState(() {
+          _isAutoConnecting = false;
+        });
+        // If auto-connect failed, start regular scan
+        _startScan();
+      }
+    } else {
+      // No auto-connect, start regular scan
+      _startScan();
     }
   }
   
-  Future<void> _updateConfiguration() async {
-    if (_phoneController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a phone number')),
-      );
-      return;
+  Future<void> _checkBluetoothAndScan() async {
+    final available = await _bleService.checkBluetoothAvailability();
+    if (available && _connectionState != BluetoothConnectionState.connected) {
+      _startScan();
     }
+  }
+  
+  Future<void> _startScan() async {
+    if (_isScanning || _connectionState == BluetoothConnectionState.connected) return;
     
     setState(() {
-      _isUpdatingConfig = true;
+      _isScanning = true;
+      _availableDevices.clear();
     });
     
-    final config = TrackerConfig(
-      phoneNumber: _phoneController.text,
-      updateInterval: _updateInterval,
-      alertEnabled: _alertEnabled,
-    );
-    
-    final success = await _bleService.writeConfig(config);
-    
-    if (mounted) {
+    try {
+      await _bleService.startScan();
+      
+      Future.delayed(const Duration(seconds: 10), () {
+        if (mounted) {
+          setState(() {
+            _isScanning = false;
+          });
+        }
+      });
+    } catch (e) {
+      developer.log('Error scanning: $e', name: 'HomeScreen');
       setState(() {
-        _isUpdatingConfig = false;
+        _isScanning = false;
+      });
+    }
+  }
+  
+  Future<void> _connectToDevice(BikeDevice device) async {
+    setState(() {
+      _connectingDeviceId = device.id;
+    });
+    
+    final success = await _bleService.connectToDevice(device);
+    
+    if (!success && mounted) {
+      setState(() {
+        _connectingDeviceId = null;
       });
       
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(success ? 'Configuration updated' : 'Failed to update configuration'),
-          backgroundColor: success ? Colors.green : Theme.of(context).colorScheme.error,
-        ),
+        const SnackBar(content: Text('Failed to connect')),
       );
     }
   }
   
-  Future<void> _requestLocationUpdate() async {
-    final location = await _bleService.requestLocation();
-    if (location != null && mounted) {
-      setState(() {
-        _currentLocation = location;
-      });
-    }
+  Future<void> _disconnect() async {
+    await _bleService.disconnect();
   }
   
-  Widget _buildStatusCard() {
+  Widget _buildConnectionStatus() {
     final theme = Theme.of(context);
-    final status = _deviceStatus ?? DeviceStatus.initial();
+    
+    String statusText;
+    IconData statusIcon;
+    Color statusColor;
+    
+    if (_isAutoConnecting) {
+      statusText = 'Auto-connecting...';
+      statusIcon = Icons.bluetooth_searching;
+      statusColor = theme.colorScheme.secondary;
+    } else {
+      switch (_connectionState) {
+        case BluetoothConnectionState.connected:
+          statusText = 'Connected';
+          statusIcon = Icons.bluetooth_connected;
+          statusColor = theme.colorScheme.primary;
+          break;
+        default:
+          statusText = 'Disconnected';
+          statusIcon = Icons.bluetooth_disabled;
+          statusColor = theme.colorScheme.error;
+      }
+    }
     
     return Card(
+      margin: const EdgeInsets.all(16),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(
-                  status.isTheftDetected ? Icons.warning : Icons.shield,
-                  color: status.isTheftDetected 
-                    ? theme.colorScheme.error 
-                    : theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Device Status',
-                  style: theme.textTheme.titleLarge,
-                ),
-              ],
-            ),
+            if (_isAutoConnecting)
+              const CircularProgressIndicator()
+            else
+              Icon(
+                statusIcon,
+                size: 64,
+                color: statusColor,
+              ),
             const SizedBox(height: 16),
-            _buildStatusRow('Mode', status.mode.value, 
-              status.isTheftDetected ? theme.colorScheme.error : null),
-            _buildStatusRow('Motion', status.motionDetected ? 'Detected' : 'None'),
-            _buildStatusRow('User Present', status.userPresent ? 'Yes' : 'No'),
-            _buildStatusRow('BLE', status.bleConnected ? 'Connected' : 'Disconnected'),
-            const SizedBox(height: 8),
             Text(
-              status.statusMessage,
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: status.isTheftDetected 
-                  ? theme.colorScheme.error 
-                  : theme.colorScheme.primary,
+              statusText,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: statusColor,
                 fontWeight: FontWeight.bold,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildStatusRow(String label, String value, [Color? valueColor]) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: valueColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  void _updateMapMarker(LocationData location) {
-    _markers.clear();
-    
-    final markerIcon = location.source == LocationSource.phone
-        ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue)
-        : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
-    
-    _markers.add(
-      Marker(
-        markerId: const MarkerId('bike_location'),
-        position: LatLng(location.latitude, location.longitude),
-        icon: markerIcon,
-        infoWindow: InfoWindow(
-          title: 'Bike Location',
-          snippet: 'Source: ${location.source.name}\nSpeed: ${location.formattedSpeed}',
-        ),
-      ),
-    );
-    
-    if (_mapController != null && _isMapReady) {
-      _mapController!.animateCamera(
-        CameraUpdate.newLatLng(
-          LatLng(location.latitude, location.longitude),
-        ),
-      );
-    }
-  }
-  
-  Widget _buildLocationCard() {
-    final theme = Theme.of(context);
-    
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.location_on, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Location',
-                  style: theme.textTheme.titleLarge,
+            if (_isAutoConnecting && _savedDevice != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Searching for ${_savedDevice!['name']}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+            if (_connectionState == BluetoothConnectionState.connected && _bleService.connectedDevice != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Device: ${_bleService.connectedDevice!.platformName}',
+                style: theme.textTheme.bodyMedium,
+              ),
+              Text(
+                _bleService.connectedDevice!.remoteId.toString(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _requestLocationUpdate,
+              ),
+            ],
+            if (!_isAutoConnecting && _connectionState != BluetoothConnectionState.connected) ...[
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Auto-connect',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  const SizedBox(width: 8),
+                  Switch(
+                    value: _autoConnectEnabled,
+                    onChanged: (value) async {
+                      await _bleService.setAutoConnectEnabled(value);
+                      setState(() {
+                        _autoConnectEnabled = value;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              if (_savedDevice != null && _autoConnectEnabled) ...[
+                Text(
+                  'Will auto-connect to: ${_savedDevice!['name']}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await _bleService.clearLastConnectedDevice();
+                    setState(() {
+                      _savedDevice = null;
+                    });
+                  },
+                  child: Text(
+                    'Forget Device',
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
                 ),
               ],
-            ),
-            const SizedBox(height: 16),
-            if (_currentLocation != null && _currentLocation!.isValid) ...[
-              _buildStatusRow('Coordinates', _currentLocation!.formattedCoordinates),
-              _buildStatusRow('Speed', _currentLocation!.formattedSpeed),
-              _buildStatusRow('Satellites', _currentLocation!.satellites.toString()),
-              _buildStatusRow('Battery', '${_currentLocation!.battery}%'),
-              _buildStatusRow('Source', _currentLocation!.source.name.toUpperCase()),
-              _buildStatusRow('Last Update', _currentLocation!.formattedTime),
-            ] else ...[
-              const Center(
-                child: Text('No location data available'),
-              ),
             ],
           ],
         ),
@@ -276,232 +306,364 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
   
-  Widget _buildMapCard() {
-    final theme = Theme.of(context);
-    final initialPosition = _currentLocation != null && _currentLocation!.isValid
-        ? LatLng(_currentLocation!.latitude, _currentLocation!.longitude)
-        : const LatLng(37.7749, -122.4194);
-    
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Icon(Icons.map, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Live Map',
-                  style: theme.textTheme.titleLarge,
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 300,
-            child: GoogleMap(
-              onMapCreated: (controller) {
-                _mapController = controller;
-                setState(() {
-                  _isMapReady = true;
-                });
-              },
-              initialCameraPosition: CameraPosition(
-                target: initialPosition,
-                zoom: 16.0,
-              ),
-              markers: _markers,
-              myLocationEnabled: false,
-              myLocationButtonEnabled: false,
-              mapType: MapType.normal,
-              compassEnabled: true,
-              zoomControlsEnabled: true,
-              style: '''[
-                {
-                  "elementType": "geometry",
-                  "stylers": [{"color": "#212121"}]
-                },
-                {
-                  "elementType": "labels.text.fill",
-                  "stylers": [{"color": "#757575"}]
-                },
-                {
-                  "elementType": "labels.text.stroke",
-                  "stylers": [{"color": "#212121"}]
-                },
-                {
-                  "featureType": "road",
-                  "elementType": "geometry",
-                  "stylers": [{"color": "#2c2c2c"}]
-                },
-                {
-                  "featureType": "water",
-                  "elementType": "geometry",
-                  "stylers": [{"color": "#000000"}]
-                }
-              ]''',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildConfigurationCard() {
+  Widget _buildDeviceList() {
     final theme = Theme.of(context);
     
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.settings, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Configuration',
-                  style: theme.textTheme.titleLarge,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _phoneController,
-              decoration: const InputDecoration(
-                labelText: 'Emergency Phone Number',
-                hintText: '+1234567890',
-                prefixIcon: Icon(Icons.phone),
+    if (_availableDevices.isEmpty && !_isScanning) {
+      return Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            children: [
+              Icon(
+                Icons.search_off,
+                size: 48,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-              keyboardType: TextInputType.phone,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Update Interval:'),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Slider(
-                    value: _updateInterval.toDouble(),
-                    min: 10,
-                    max: 300,
-                    divisions: 29,
-                    label: '$_updateInterval seconds',
-                    onChanged: (value) {
-                      setState(() {
-                        _updateInterval = value.round();
-                      });
-                    },
+              const SizedBox(height: 16),
+              Text(
+                'No bike trackers found',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Make sure your tracker is powered on',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    return Column(
+      children: [
+        if (_isScanning)
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                ),
-                Text('${_updateInterval}s'),
-              ],
+                  const SizedBox(width: 12),
+                  Text(
+                    'Scanning for devices...',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ),
             ),
-            SwitchListTile(
-              title: const Text('SMS Alerts'),
-              subtitle: const Text('Send SMS when theft is detected'),
-              value: _alertEnabled,
-              onChanged: (value) {
-                setState(() {
-                  _alertEnabled = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _isUpdatingConfig ? null : _updateConfiguration,
-                child: _isUpdatingConfig
+          ),
+        ..._availableDevices.map((device) {
+          final isConnecting = _connectingDeviceId == device.id;
+          
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: ListTile(
+              leading: Icon(
+                Icons.directions_bike,
+                color: theme.colorScheme.primary,
+              ),
+              title: Text(device.name),
+              subtitle: Text('Signal: ${device.rssi} dBm'),
+              trailing: ElevatedButton(
+                onPressed: isConnecting ? null : () => _connectToDevice(device),
+                child: isConnecting
                   ? const SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Update Configuration'),
+                  : const Text('Connect'),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+  
+  Widget _buildActionButtons() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          if (_connectionState == BluetoothConnectionState.connected) ...[
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _disconnect,
+                icon: const Icon(Icons.bluetooth_disabled),
+                label: const Text('Disconnect'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ] else ...[
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isScanning ? null : _startScan,
+                icon: const Icon(Icons.search),
+                label: Text(_isScanning ? 'Scanning...' : 'Scan for Devices'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
   
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     
     return Scaffold(
       appBar: AppBar(
         title: const Text('Smart Bike Tracker'),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: _connectionState == BluetoothConnectionState.connected
-                ? Colors.green.withValues(alpha: 0.2)
-                : Colors.orange.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.bluetooth_connected,
-                  size: 16,
-                  color: _connectionState == BluetoothConnectionState.connected
-                    ? Colors.green
-                    : Colors.orange,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _connectionState == BluetoothConnectionState.connected
-                    ? 'Connected'
-                    : 'Connecting...',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _connectionState == BluetoothConnectionState.connected
-                      ? Colors.green
-                      : Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.bluetooth_disabled),
-            onPressed: () async {
-              await _bleService.disconnect();
-              if (!context.mounted) return;
-              Navigator.of(context).pushReplacementNamed('/');
-            },
-          ),
-        ],
+        centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          children: [
-            _buildStatusCard(),
-            _buildLocationCard(),
-            _buildMapCard(),
-            _buildConfigurationCard(),
+      body: Column(
+        children: [
+          _buildConnectionStatus(),
+          if (_connectionState != BluetoothConnectionState.connected) ...[
+            Expanded(
+              child: SingleChildScrollView(
+                child: _buildDeviceList(),
+              ),
+            ),
+          ] else ...[
+            // Location tracking section when connected
+            Expanded(
+              child: Column(
+                children: [
+                  // Location tracking status with tabs - reduced padding
+                  Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _isTrackingLocation ? Icons.location_on : Icons.location_off,
+                                color: _isTrackingLocation ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                _isTrackingLocation ? 'Location Tracking Active' : 'Location Tracking Inactive',
+                                style: theme.textTheme.titleMedium,
+                              ),
+                              const Spacer(),
+                              if (_locationHistory.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primaryContainer,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${_locationHistory.length} logs',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        // Tab bar for map/list view
+                        TabBar(
+                          controller: _tabController,
+                          tabs: const [
+                            Tab(
+                              icon: Icon(Icons.map),
+                              text: 'Map',
+                            ),
+                            Tab(
+                              icon: Icon(Icons.list),
+                              text: 'List',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Tab view for map and list
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        // Map View
+                        LocationMap(
+                          locationHistory: _locationHistory,
+                          currentLocation: _currentLocation,
+                          isTracking: _isTrackingLocation,
+                        ),
+                        // List View - wrapped in builder to maintain state
+                        Builder(
+                          builder: (context) => _locationHistory.isEmpty
+                            ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.location_searching,
+                                    size: 64,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Waiting for location data...',
+                                    style: theme.textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Location logs will appear here',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          itemCount: _locationHistory.length,
+                          itemBuilder: (context, index) {
+                            final location = _locationHistory[index];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: theme.colorScheme.primaryContainer,
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onPrimaryContainer,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                title: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.access_time,
+                                      size: 16,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${location.formattedDate} ${location.formattedTimestamp}',
+                                      style: theme.textTheme.bodyLarge?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.location_on,
+                                          size: 14,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            'Lat: ${location.latitude.toStringAsFixed(6)}',
+                                            style: theme.textTheme.bodyMedium,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Row(
+                                      children: [
+                                        const SizedBox(width: 18),
+                                        Expanded(
+                                          child: Text(
+                                            'Lng: ${location.longitude.toStringAsFixed(6)}',
+                                            style: theme.textTheme.bodyMedium,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                trailing: index == 0
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.primary,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        'Latest',
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: theme.colorScheme.onPrimary,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
+                              ),
+                            );
+                          },
+                        ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Clear button - only show in list view
+                  if (_locationHistory.isNotEmpty && _tabController.index == 1)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: TextButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _locationHistory.clear();
+                          });
+                        },
+                        icon: const Icon(Icons.clear_all),
+                        label: const Text('Clear Location History'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
-        ),
+          _buildActionButtons(),
+        ],
       ),
     );
   }
   
   @override
   void dispose() {
-    _phoneController.dispose();
-    _locationSubscription?.cancel();
-    _statusSubscription?.cancel();
+    _tabController.dispose();
     _connectionSubscription?.cancel();
-    _phoneLocationSubscription?.cancel();
-    _mapController?.dispose();
+    _scanSubscription?.cancel();
+    _locationSubscription?.cancel();
+    _locationService.dispose();
     super.dispose();
   }
 }

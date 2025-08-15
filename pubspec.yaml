@@ -38,21 +38,21 @@ dependencies:
   # BLE Communication
   flutter_blue_plus: ^1.32.12
   
-  # Location Services
-  geolocator: ^13.0.2
+  # Permissions (needed for BLE scanning)
   permission_handler: ^11.3.1
   
-  # Maps Integration
-  google_maps_flutter: ^2.9.0
-  
-  # State Management
-  provider: ^6.1.2
-  
-  # Local Storage
+  # Local Storage (for auto-connect)
   shared_preferences: ^2.3.3
   
-  # Utilities
-  url_launcher: ^6.3.1
+  # Location Services (for GPS tracking)
+  geolocator: ^13.0.2
+  
+  # Map display with caching
+  flutter_map: ^6.1.0
+  flutter_map_cache: ^1.5.1
+  latlong2: ^0.9.1
+  dio: ^5.7.0
+  dio_cache_interceptor: ^3.5.0
 
 dev_dependencies:
   flutter_test:

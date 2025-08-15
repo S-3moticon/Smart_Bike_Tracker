@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/bike_device.dart';
-import '../models/location_data.dart';
-import '../models/device_status.dart';
-import '../models/tracker_config.dart';
 import '../constants/ble_protocol.dart';
 
 class BikeBluetoothService {
@@ -17,28 +14,22 @@ class BikeBluetoothService {
   
   final _scanResultsController = StreamController<List<BikeDevice>>.broadcast();
   final _connectionStateController = StreamController<BluetoothConnectionState>.broadcast();
-  final _locationDataController = StreamController<LocationData>.broadcast();
-  final _deviceStatusController = StreamController<DeviceStatus>.broadcast();
   
   Stream<List<BikeDevice>> get scanResults => _scanResultsController.stream;
   Stream<BluetoothConnectionState> get connectionState => _connectionStateController.stream;
-  Stream<LocationData> get locationData => _locationDataController.stream;
-  Stream<DeviceStatus> get deviceStatus => _deviceStatusController.stream;
   
   final List<BikeDevice> _discoveredDevices = [];
   BluetoothDevice? _connectedDevice;
   StreamSubscription? _scanSubscription;
   StreamSubscription? _connectionSubscription;
-  StreamSubscription? _locationSubscription;
-  StreamSubscription? _statusSubscription;
-  
-  BluetoothCharacteristic? _locationChar;
-  BluetoothCharacteristic? _configChar;
-  BluetoothCharacteristic? _statusChar;
   
   Timer? _reconnectionTimer;
   String? _lastConnectedDeviceId;
   bool _isReconnecting = false;
+  
+  static const String _prefKeyLastDevice = 'last_connected_device_id';
+  static const String _prefKeyLastDeviceName = 'last_connected_device_name';
+  static const String _prefKeyAutoConnect = 'auto_connect_enabled';
   
   Future<bool> checkBluetoothAvailability() async {
     try {
@@ -107,8 +98,6 @@ class BikeBluetoothService {
       await FlutterBluePlus.startScan(
         timeout: timeout,
         androidScanMode: AndroidScanMode.lowLatency,
-        // Remove service filter to see all devices including our ESP32
-        // withServices: [Guid(BleProtocol.serviceUuid)],
       );
       
       _scanSubscription?.cancel();
@@ -123,17 +112,13 @@ class BikeBluetoothService {
           // Enhanced logging for debugging
           developer.log(
             'Device found: name="${device.name}", '
-            'advName="${result.advertisementData.advName}", '
-            'platformName="${result.device.platformName}", '
             'id=${device.id}, '
             'rssi=${device.rssi}, '
-            'isBikeTracker=${device.isBikeTracker}, '
-            'services=${result.advertisementData.serviceUuids}',
+            'isBikeTracker=${device.isBikeTracker}',
             name: 'BLE',
           );
           
           // Add all devices, even those without names (might be our ESP32)
-          // The ESP32 might not always broadcast its name in advertisement
           final existingIndex = _discoveredDevices.indexWhere(
             (d) => d.id == device.id,
           );
@@ -170,7 +155,6 @@ class BikeBluetoothService {
     try {
       await stopScan();
       
-      // Note: Android & iOS don't stream connecting state
       _connectedDevice = bikeDevice.device;
       _lastConnectedDeviceId = bikeDevice.id;
       
@@ -190,7 +174,11 @@ class BikeBluetoothService {
         _connectionStateController.add(state);
       });
       
+      // Discover services after connection
       await _discoverServices(bikeDevice.device);
+      
+      // Save device info for auto-connect
+      await _saveLastConnectedDevice(bikeDevice.id, bikeDevice.name);
       
       developer.log('Connected to ${bikeDevice.name}', name: 'BLE');
       return true;
@@ -206,143 +194,23 @@ class BikeBluetoothService {
       final services = await device.discoverServices();
       
       for (var service in services) {
+        developer.log('Found service: ${service.uuid}', name: 'BLE');
+        
         if (service.uuid.toString().toLowerCase() == BleProtocol.serviceUuid.toLowerCase()) {
           developer.log('Found bike tracker service', name: 'BLE');
           
           for (var char in service.characteristics) {
-            final charUuid = char.uuid.toString().toLowerCase();
-            
-            if (charUuid == BleProtocol.locationCharUuid.toLowerCase()) {
-              _locationChar = char;
-              await _subscribeToLocation(char);
-              developer.log('Found location characteristic', name: 'BLE');
-            } else if (charUuid == BleProtocol.configCharUuid.toLowerCase()) {
-              _configChar = char;
-              developer.log('Found config characteristic', name: 'BLE');
-            } else if (charUuid == BleProtocol.statusCharUuid.toLowerCase()) {
-              _statusChar = char;
-              await _subscribeToStatus(char);
-              developer.log('Found status characteristic', name: 'BLE');
-            } else if (charUuid == BleProtocol.commandCharUuid.toLowerCase()) {
-              // Command characteristic found but not used yet
-              developer.log('Found command characteristic', name: 'BLE');
-            }
+            developer.log('  Characteristic: ${char.uuid}', name: 'BLE');
           }
-          break;
         }
-      }
-      
-      if (_locationChar == null || _configChar == null || _statusChar == null) {
-        developer.log('Warning: Some characteristics not found', name: 'BLE');
       }
     } catch (e) {
       developer.log('Error discovering services: $e', name: 'BLE', error: e);
     }
   }
   
-  Future<void> _subscribeToLocation(BluetoothCharacteristic char) async {
-    try {
-      await char.setNotifyValue(true);
-      
-      _locationSubscription?.cancel();
-      _locationSubscription = char.onValueReceived.listen((value) {
-        try {
-          final jsonString = utf8.decode(value);
-          final json = jsonDecode(jsonString) as Map<String, dynamic>;
-          final location = LocationData.fromJson(json, LocationSource.sim7070g);
-          _locationDataController.add(location);
-          developer.log('Received location: ${location.formattedCoordinates}', name: 'BLE');
-        } catch (e) {
-          developer.log('Error parsing location data: $e', name: 'BLE', error: e);
-        }
-      });
-    } catch (e) {
-      developer.log('Error subscribing to location: $e', name: 'BLE', error: e);
-    }
-  }
-  
-  Future<void> _subscribeToStatus(BluetoothCharacteristic char) async {
-    try {
-      await char.setNotifyValue(true);
-      
-      _statusSubscription?.cancel();
-      _statusSubscription = char.onValueReceived.listen((value) {
-        try {
-          final jsonString = utf8.decode(value);
-          final json = jsonDecode(jsonString) as Map<String, dynamic>;
-          final status = DeviceStatus.fromJson(json);
-          _deviceStatusController.add(status);
-          developer.log('Received status: ${status.mode.value}', name: 'BLE');
-        } catch (e) {
-          developer.log('Error parsing status data: $e', name: 'BLE', error: e);
-        }
-      });
-    } catch (e) {
-      developer.log('Error subscribing to status: $e', name: 'BLE', error: e);
-    }
-  }
-  
-  Future<bool> writeConfig(TrackerConfig config) async {
-    try {
-      if (_configChar == null) {
-        developer.log('Config characteristic not available', name: 'BLE');
-        return false;
-      }
-      
-      final jsonString = config.toJsonString();
-      final bytes = utf8.encode(jsonString);
-      
-      await _configChar!.write(bytes, withoutResponse: false);
-      developer.log('Config written successfully', name: 'BLE');
-      return true;
-    } catch (e) {
-      developer.log('Error writing config: $e', name: 'BLE', error: e);
-      return false;
-    }
-  }
-  
-  Future<LocationData?> requestLocation() async {
-    try {
-      if (_locationChar == null) {
-        developer.log('Location characteristic not available', name: 'BLE');
-        return null;
-      }
-      
-      final value = await _locationChar!.read();
-      final jsonString = utf8.decode(value);
-      final json = jsonDecode(jsonString) as Map<String, dynamic>;
-      return LocationData.fromJson(json, LocationSource.sim7070g);
-    } catch (e) {
-      developer.log('Error requesting location: $e', name: 'BLE', error: e);
-      return null;
-    }
-  }
-  
-  Future<DeviceStatus?> requestStatus() async {
-    try {
-      if (_statusChar == null) {
-        developer.log('Status characteristic not available', name: 'BLE');
-        return null;
-      }
-      
-      final value = await _statusChar!.read();
-      final jsonString = utf8.decode(value);
-      final json = jsonDecode(jsonString) as Map<String, dynamic>;
-      return DeviceStatus.fromJson(json);
-    } catch (e) {
-      developer.log('Error requesting status: $e', name: 'BLE', error: e);
-      return null;
-    }
-  }
-  
   void _handleDisconnection() {
     developer.log('Device disconnected, attempting reconnection...', name: 'BLE');
-    
-    _locationSubscription?.cancel();
-    _statusSubscription?.cancel();
-    _locationChar = null;
-    _configChar = null;
-    _statusChar = null;
     
     if (!_isReconnecting && _lastConnectedDeviceId != null) {
       _isReconnecting = true;
@@ -393,8 +261,6 @@ class BikeBluetoothService {
     _isReconnecting = false;
     _lastConnectedDeviceId = null;
     
-    await _locationSubscription?.cancel();
-    await _statusSubscription?.cancel();
     await _connectionSubscription?.cancel();
     
     if (_connectedDevice != null) {
@@ -402,23 +268,120 @@ class BikeBluetoothService {
       _connectedDevice = null;
     }
     
-    _locationChar = null;
-    _configChar = null;
-    _statusChar = null;
-    
     _connectionStateController.add(BluetoothConnectionState.disconnected);
+  }
+  
+  // Auto-connect methods
+  Future<void> _saveLastConnectedDevice(String deviceId, String deviceName) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefKeyLastDevice, deviceId);
+      await prefs.setString(_prefKeyLastDeviceName, deviceName);
+      await prefs.setBool(_prefKeyAutoConnect, true);
+      developer.log('Saved device for auto-connect: $deviceName ($deviceId)', name: 'BLE');
+    } catch (e) {
+      developer.log('Error saving device preferences: $e', name: 'BLE', error: e);
+    }
+  }
+  
+  Future<Map<String, String>?> getLastConnectedDevice() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final autoConnect = prefs.getBool(_prefKeyAutoConnect) ?? true;
+      
+      if (!autoConnect) return null;
+      
+      final deviceId = prefs.getString(_prefKeyLastDevice);
+      final deviceName = prefs.getString(_prefKeyLastDeviceName);
+      
+      if (deviceId != null && deviceName != null) {
+        developer.log('Found saved device: $deviceName ($deviceId)', name: 'BLE');
+        return {'id': deviceId, 'name': deviceName};
+      }
+    } catch (e) {
+      developer.log('Error loading device preferences: $e', name: 'BLE', error: e);
+    }
+    return null;
+  }
+  
+  Future<void> clearLastConnectedDevice() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefKeyLastDevice);
+      await prefs.remove(_prefKeyLastDeviceName);
+      developer.log('Cleared saved device', name: 'BLE');
+    } catch (e) {
+      developer.log('Error clearing device preferences: $e', name: 'BLE', error: e);
+    }
+  }
+  
+  Future<void> setAutoConnectEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefKeyAutoConnect, enabled);
+      developer.log('Auto-connect set to: $enabled', name: 'BLE');
+    } catch (e) {
+      developer.log('Error setting auto-connect preference: $e', name: 'BLE', error: e);
+    }
+  }
+  
+  Future<bool> isAutoConnectEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_prefKeyAutoConnect) ?? true;
+    } catch (e) {
+      developer.log('Error getting auto-connect preference: $e', name: 'BLE', error: e);
+      return true;
+    }
+  }
+  
+  Future<bool> tryAutoConnect() async {
+    try {
+      final lastDevice = await getLastConnectedDevice();
+      if (lastDevice == null) {
+        developer.log('No saved device for auto-connect', name: 'BLE');
+        return false;
+      }
+      
+      developer.log('Attempting auto-connect to ${lastDevice['name']}', name: 'BLE');
+      
+      // Start scanning
+      await startScan(timeout: const Duration(seconds: 5));
+      
+      // Wait for scan to complete
+      await Future.delayed(const Duration(seconds: 5));
+      
+      // Look for the saved device
+      final device = _discoveredDevices.firstWhere(
+        (d) => d.id == lastDevice['id'],
+        orElse: () => BikeDevice(
+          device: BluetoothDevice(remoteId: const DeviceIdentifier('')),
+          name: '',
+          id: '',
+          rssi: 0,
+          lastSeen: DateTime.now(),
+        ),
+      );
+      
+      if (device.name.isNotEmpty) {
+        developer.log('Found saved device, connecting...', name: 'BLE');
+        return await connectToDevice(device);
+      } else {
+        developer.log('Saved device not found in scan', name: 'BLE');
+        return false;
+      }
+    } catch (e) {
+      developer.log('Error during auto-connect: $e', name: 'BLE', error: e);
+      return false;
+    }
   }
   
   void dispose() {
     _reconnectionTimer?.cancel();
     _scanSubscription?.cancel();
     _connectionSubscription?.cancel();
-    _locationSubscription?.cancel();
-    _statusSubscription?.cancel();
     _scanResultsController.close();
     _connectionStateController.close();
-    _locationDataController.close();
-    _deviceStatusController.close();
   }
   
   BluetoothDevice? get connectedDevice => _connectedDevice;

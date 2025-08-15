@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'constants/app_theme.dart';
-import 'screens/device_scan_screen.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -21,11 +20,7 @@ class SmartBikeTrackerApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
       debugShowCheckedModeBanner: false,
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const DeviceScanScreen(),
-        '/home': (context) => const HomeScreen(),
-      },
+      home: const HomeScreen(),
     );
   }
 }
