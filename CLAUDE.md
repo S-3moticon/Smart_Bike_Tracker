@@ -119,9 +119,12 @@ dependencies:
   geolocator: ^13.0.2  # Phone GPS access
   permission_handler: ^11.3.1  # Runtime permissions
   
-  # Maps (Offline Solution)
-  # Consider: Tangram ES or custom canvas implementation
-  # Currently using custom canvas map widget
+  # Maps (Online with Caching)
+  flutter_map: ^6.1.0  # Interactive tile-based map
+  flutter_map_cache: ^1.5.1  # Tile caching support
+  latlong2: ^0.9.1  # Coordinate handling
+  dio: ^5.7.0  # HTTP client for tile fetching
+  dio_cache_interceptor: ^3.5.0  # Cache management
   
   # State Management
   provider: ^6.1.2  # State management solution
@@ -278,21 +281,29 @@ The app interfaces with:
 ### Completed Features
 - ✅ BLE communication service with ESP32 (tested with real hardware)
 - ✅ Android 12+ Bluetooth permissions handling
-- ✅ Device scanning and connection UI
-- ✅ Custom offline map canvas for location display
+- ✅ Device scanning and connection UI with auto-reconnect
+- ✅ Auto-connect to previously paired devices on app restart
+- ✅ Phone GPS tracking when BLE connected (Geolocator implementation)
+- ✅ Location history logging with timestamp display
+- ✅ Interactive map display with multiple tile providers (OpenStreetMap, CartoDB, Esri)
+- ✅ Map tile caching for improved performance
+- ✅ TabBarView for Map/List dual interface
+- ✅ Location history list view with detailed coordinates
+- ✅ Map state preservation using AutomaticKeepAliveClientMixin
+- ✅ Optimized map loading with deferred cache initialization
 - ✅ SMS alert configuration interface (phone number & interval)
 - ✅ Basic theft detection algorithm in MCU
 - ✅ Data models and BLE protocol implementation
 
 ### In Progress
-- ⚠️ Dual-source GPS tracking implementation
-- ⚠️ Location history logging
+- ⚠️ Dual-source GPS tracking (SIM7070G integration pending)
 - ⚠️ Power optimization for 24-hour operation
 
 ### Pending
 - ⏳ Complete SMS alert system with SIM7070G
 - ⏳ LSM6DSL motion sensor integration
-- ⏳ State persistence with SharedPreferences
+- ⏳ State persistence with SharedPreferences for settings
+- ⏳ GPS source indicator (Phone/SIM7070G) in UI
 - ⏳ Full system integration testing
 
 Detailed requirements: `/req/requirement.md`
