@@ -263,52 +263,81 @@ class BikeBluetoothService {
   }) async {
     try {
       if (_connectedDevice == null) {
-        developer.log('No device connected', name: 'BLE');
+        developer.log('No device connected', name: 'BLE-Config');
         return false;
       }
       
+      developer.log('Starting configuration send...', name: 'BLE-Config');
+      developer.log('Connected device: ${_connectedDevice!.platformName}', name: 'BLE-Config');
+      
       // Discover services if not already done
       final services = await _connectedDevice!.discoverServices();
+      developer.log('Discovered ${services.length} services', name: 'BLE-Config');
       
-      // Find our service
+      // Log all services and characteristics for debugging
       for (var service in services) {
-        if (service.uuid.toString().toLowerCase() == BleProtocol.serviceUuid.toLowerCase()) {
-          // Find config characteristic
-          for (var characteristic in service.characteristics) {
-            if (characteristic.uuid.toString().toLowerCase() == BleProtocol.configCharUuid.toLowerCase()) {
-              // Create JSON config data
-              final configData = DataFormats.createConfigData(
-                phoneNumber: phoneNumber,
-                updateInterval: updateInterval,
-                alertEnabled: alertEnabled,
-              );
-              
-              // Convert to JSON string
-              final jsonString = '{'
-                '"phone_number":"$phoneNumber",'
-                '"update_interval":$updateInterval,'
-                '"alert_enabled":$alertEnabled'
-              '}';
-              
-              developer.log('Sending config: $jsonString', name: 'BLE');
-              
-              // Write to characteristic
-              await characteristic.write(
-                jsonString.codeUnits,
-                withoutResponse: false,
-              );
-              
-              developer.log('Configuration sent successfully', name: 'BLE');
-              return true;
-            }
-          }
+        developer.log('Service: ${service.uuid}', name: 'BLE-Config');
+        for (var char in service.characteristics) {
+          developer.log('  Char: ${char.uuid}, Properties: ${char.properties}', name: 'BLE-Config');
         }
       }
       
-      developer.log('Config characteristic not found', name: 'BLE');
+      // Find our service
+      for (var service in services) {
+        final serviceUuid = service.uuid.toString().toLowerCase();
+        developer.log('Checking service: $serviceUuid against ${BleProtocol.serviceUuid.toLowerCase()}', name: 'BLE-Config');
+        
+        if (serviceUuid == BleProtocol.serviceUuid.toLowerCase()) {
+          developer.log('Found bike tracker service!', name: 'BLE-Config');
+          
+          // Find config characteristic
+          for (var characteristic in service.characteristics) {
+            final charUuid = characteristic.uuid.toString().toLowerCase();
+            developer.log('Checking char: $charUuid against ${BleProtocol.configCharUuid.toLowerCase()}', name: 'BLE-Config');
+            
+            if (charUuid == BleProtocol.configCharUuid.toLowerCase()) {
+              developer.log('Found config characteristic!', name: 'BLE-Config');
+              
+              // Properly format JSON string
+              final alertStr = alertEnabled ? 'true' : 'false';
+              final jsonString = '{"phone_number":"$phoneNumber","update_interval":$updateInterval,"alert_enabled":$alertStr}';
+              
+              developer.log('Sending config JSON: $jsonString', name: 'BLE-Config');
+              developer.log('JSON length: ${jsonString.length} bytes', name: 'BLE-Config');
+              
+              // Write to characteristic
+              try {
+                await characteristic.write(
+                  jsonString.codeUnits,
+                  withoutResponse: false,
+                );
+                developer.log('Configuration sent successfully!', name: 'BLE-Config');
+                return true;
+              } catch (writeError) {
+                developer.log('Write error: $writeError', name: 'BLE-Config', error: writeError);
+                // Try with withoutResponse = true
+                try {
+                  await characteristic.write(
+                    jsonString.codeUnits,
+                    withoutResponse: true,
+                  );
+                  developer.log('Configuration sent (without response)!', name: 'BLE-Config');
+                  return true;
+                } catch (e) {
+                  developer.log('Write failed both ways: $e', name: 'BLE-Config');
+                  return false;
+                }
+              }
+            }
+          }
+          developer.log('Config characteristic not found in service', name: 'BLE-Config');
+        }
+      }
+      
+      developer.log('Bike tracker service not found', name: 'BLE-Config');
       return false;
     } catch (e) {
-      developer.log('Error sending configuration: $e', name: 'BLE', error: e);
+      developer.log('Error sending configuration: $e', name: 'BLE-Config', error: e);
       return false;
     }
   }
