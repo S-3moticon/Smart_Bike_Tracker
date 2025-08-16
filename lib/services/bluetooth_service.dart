@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
+import 'dart:io' show Platform;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -174,6 +174,16 @@ class BikeBluetoothService {
         _connectionStateController.add(state);
       });
       
+      // Request larger MTU for config data (default is 23, we need at least 100)
+      try {
+        if (Platform.isAndroid) {
+          final mtu = await bikeDevice.device.requestMtu(185);
+          developer.log('MTU negotiated: $mtu bytes', name: 'BLE');
+        }
+      } catch (e) {
+        developer.log('MTU negotiation failed: $e', name: 'BLE');
+      }
+      
       // Discover services after connection
       await _discoverServices(bikeDevice.device);
       
@@ -309,9 +319,30 @@ class BikeBluetoothService {
             if (charUuid == targetCharUuid || charUuid == shortTargetCharUuid) {
               developer.log('Found config characteristic!', name: 'BLE-Config');
               
-              // Properly format JSON string
-              final alertStr = alertEnabled ? 'true' : 'false';
-              final jsonString = '{"phone_number":"$phoneNumber","update_interval":$updateInterval,"alert_enabled":$alertStr}';
+              // Check if we need compact format (if MTU is small)
+              bool useCompactFormat = false;
+              try {
+                final mtu = await _connectedDevice!.mtu.first;
+                developer.log('Current MTU: $mtu', name: 'BLE-Config');
+                if (mtu < 100) {
+                  useCompactFormat = true;
+                  developer.log('Using compact format due to small MTU', name: 'BLE-Config');
+                }
+              } catch (e) {
+                developer.log('Could not get MTU: $e', name: 'BLE-Config');
+              }
+              
+              // Format JSON string (compact if needed)
+              String jsonString;
+              if (useCompactFormat) {
+                // Compact format: remove spaces and use short keys
+                final alertStr = alertEnabled ? '1' : '0';
+                jsonString = '{"p":"$phoneNumber","i":$updateInterval,"a":$alertStr}';
+              } else {
+                // Full format
+                final alertStr = alertEnabled ? 'true' : 'false';
+                jsonString = '{"phone_number":"$phoneNumber","update_interval":$updateInterval,"alert_enabled":$alertStr}';
+              }
               
               developer.log('Sending config JSON: $jsonString', name: 'BLE-Config');
               developer.log('JSON length: ${jsonString.length} bytes', name: 'BLE-Config');
