@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:latlong2/latlong.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 import '../services/bluetooth_service.dart' as bike_ble;
 import '../services/location_service.dart';
+import '../services/location_storage_service.dart';
 import '../models/bike_device.dart';
 import '../models/location_data.dart';
 import '../widgets/location_map.dart';
 import '../widgets/device_status_card.dart';
+import '../widgets/map_download_dialog.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -20,6 +24,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final bike_ble.BikeBluetoothService _bleService = bike_ble.BikeBluetoothService();
   final LocationService _locationService = LocationService();
+  final LocationStorageService _storageService = LocationStorageService();
   
   BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
   bool _isScanning = false;
@@ -30,7 +35,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _autoConnectEnabled = true;
   
   // Location tracking
-  final List<LocationData> _locationHistory = [];
+  List<LocationData> _locationHistory = [];
   bool _isTrackingLocation = false;
   LocationData? _currentLocation;
   
@@ -49,7 +54,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {}); // Rebuild to show/hide clear button
     });
     _setupListeners();
+    _loadLocationHistory();
     _initializeAndAutoConnect();
+  }
+  
+  Future<void> _loadLocationHistory() async {
+    final history = await _storageService.loadLocationHistory();
+    setState(() {
+      _locationHistory = history;
+    });
+    developer.log('Loaded ${history.length} locations from storage', name: 'HomeScreen');
   }
   
   void _setupListeners() {
@@ -78,15 +92,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
     
     // Location updates listener
-    _locationSubscription = _locationService.locationStream.listen((location) {
+    _locationSubscription = _locationService.locationStream.listen((location) async {
       setState(() {
         _currentLocation = location;
         _locationHistory.insert(0, location); // Add to beginning for newest first
-        // Keep only last 100 locations
-        if (_locationHistory.length > 100) {
+        // Keep only last 500 locations in memory
+        if (_locationHistory.length > 500) {
           _locationHistory.removeLast();
         }
       });
+      // Save to persistent storage
+      await _storageService.addLocation(location);
     });
   }
   
@@ -190,7 +206,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   Future<void> _disconnect() async {
-    await _bleService.disconnect();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Disconnect Device'),
+        content: const Text('Are you sure you want to disconnect from the bike tracker?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      await _bleService.disconnect();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Disconnected from device')),
+        );
+      }
+    }
   }
   
   Widget _buildConnectionStatus() {
@@ -488,6 +532,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 style: theme.textTheme.titleMedium,
                               ),
                               const Spacer(),
+                              // Show clear button when in list view
+                              if (_tabController.index == 1 && _locationHistory.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.clear_all),
+                                  color: theme.colorScheme.error,
+                                  onPressed: _clearLocationHistory,
+                                  tooltip: 'Clear History',
+                                ),
+                              // Show download button when in map view
+                              if (_tabController.index == 0 && _locationHistory.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.download),
+                                  onPressed: () => _showMapDownloadDialog(),
+                                  tooltip: 'Download Map',
+                                ),
                               if (_locationHistory.isNotEmpty)
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -561,14 +620,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 ],
                               ),
                             )
-                          : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          itemCount: _locationHistory.length,
-                          itemBuilder: (context, index) {
-                            final location = _locationHistory[index];
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
+                          : RawScrollbar(
+                            thumbVisibility: true, // Always show scrollbar
+                            thickness: 8.0,
+                            radius: const Radius.circular(4),
+                            thumbColor: theme.colorScheme.primary.withOpacity(0.6),
+                            interactive: true, // Allow dragging the scrollbar
+                            child: ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              itemCount: _locationHistory.length,
+                              itemBuilder: (context, index) {
+                                final location = _locationHistory[index];
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  child: ListTile(
+                                    onTap: () => _copyLocationToClipboard(location),
                                 leading: CircleAvatar(
                                   backgroundColor: theme.colorScheme.primaryContainer,
                                   child: Text(
@@ -645,28 +711,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     )
                                   : null,
                               ),
-                            );
-                          },
-                        ),
+                                );
+                              },
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  // Clear button - only show in list view
-                  if (_locationHistory.isNotEmpty && _tabController.index == 1)
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: TextButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _locationHistory.clear();
-                          });
-                        },
-                        icon: const Icon(Icons.clear_all),
-                        label: const Text('Clear Location History'),
-                      ),
-                    ),
-                  const SizedBox(height: 20), // Add some bottom padding
+                  // No buttons below the list - removed for better UX
                 ],
                 ),
               ),
@@ -674,6 +727,74 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ],
           _buildActionButtons(),
         ],
+      ),
+    );
+  }
+  
+  void _copyLocationToClipboard(LocationData location) {
+    final coordinates = '${location.latitude}, ${location.longitude}';
+    Clipboard.setData(ClipboardData(text: coordinates));
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Copied: $coordinates'),
+        duration: const Duration(seconds: 2),
+        action: SnackBarAction(
+          label: 'Open Maps',
+          onPressed: () {
+            // Could launch maps app with coordinates if needed
+            developer.log('Open maps with: $coordinates', name: 'HomeScreen');
+          },
+        ),
+      ),
+    );
+  }
+  
+  Future<void> _clearLocationHistory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Location History'),
+        content: const Text('This will permanently delete all saved location history. Continue?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      await _storageService.clearLocationHistory();
+      setState(() {
+        _locationHistory.clear();
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location history cleared')),
+        );
+      }
+    }
+  }
+  
+  void _showMapDownloadDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => MapDownloadDialog(
+        currentLocation: _currentLocation != null 
+          ? LatLng(_currentLocation!.latitude, _currentLocation!.longitude)
+          : null,
+        tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       ),
     );
   }

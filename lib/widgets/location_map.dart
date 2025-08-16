@@ -6,6 +6,8 @@ import 'package:dio/dio.dart';
 import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'dart:developer' as developer;
 import '../models/location_data.dart';
+import '../services/map_download_service.dart';
+import 'offline_tile_provider.dart';
 
 class LocationMap extends StatefulWidget {
   final List<LocationData> locationHistory;
@@ -27,10 +29,13 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   late final MapController _mapController;
   late final Dio _dio;
   late final CacheStore _cacheStore;
+  final MapDownloadService _downloadService = MapDownloadService();
   
   // Default center (will be updated with actual location)
   LatLng _center = const LatLng(0, 0);
   double _zoom = 15.0;
+  bool _useOfflineMode = false;
+  Map<String, dynamic>? _offlineMapInfo;
   
   // Tile layer options
   int _selectedTileLayer = 0;
@@ -63,6 +68,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   ];
   
   bool _cacheInitialized = false;
+  bool _hasInitiallyMoved = false;
   
   @override
   void initState() {
@@ -75,19 +81,36 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
         widget.currentLocation!.latitude,
         widget.currentLocation!.longitude,
       );
+      _zoom = 16.0; // Zoom in closer for current location
     } else if (widget.locationHistory.isNotEmpty) {
       final latest = widget.locationHistory.first;
       _center = LatLng(latest.latitude, latest.longitude);
+      _zoom = 15.0;
     }
     
-    // Defer cache initialization to after first frame
+    // Defer cache initialization and auto-center to after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _initializeCache();
+        _checkOfflineMapAvailability();
+        // Auto-center map on first load
+        if (!_hasInitiallyMoved && (widget.currentLocation != null || widget.locationHistory.isNotEmpty)) {
+          _mapController.move(_center, _zoom);
+          _hasInitiallyMoved = true;
+        }
       }
     });
     
     developer.log('Map initialized with center: $_center', name: 'LocationMap');
+  }
+  
+  Future<void> _checkOfflineMapAvailability() async {
+    final info = await _downloadService.getOfflineMapInfo();
+    if (mounted) {
+      setState(() {
+        _offlineMapInfo = info;
+      });
+    }
   }
   
   void _initializeCache() {
@@ -132,12 +155,37 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
     developer.log('Switched to tile layer: ${_tileLayers[_selectedTileLayer]['name']}', name: 'LocationMap');
   }
   
+  void _toggleOfflineMode() {
+    setState(() {
+      _useOfflineMode = !_useOfflineMode;
+    });
+    developer.log('Offline mode: $_useOfflineMode', name: 'LocationMap');
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_useOfflineMode ? 'Using offline maps' : 'Using online maps'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+  
   @override
   void didUpdateWidget(LocationMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     
+    // Auto-center on first location received
+    if (!_hasInitiallyMoved && widget.currentLocation != null && oldWidget.currentLocation == null) {
+      _center = LatLng(
+        widget.currentLocation!.latitude,
+        widget.currentLocation!.longitude,
+      );
+      _zoom = 16.0;
+      _mapController.move(_center, _zoom);
+      _hasInitiallyMoved = true;
+      developer.log('Auto-centered map on first location', name: 'LocationMap');
+    }
     // Auto-center on new location if tracking
-    if (widget.isTracking && 
+    else if (widget.isTracking && 
         widget.currentLocation != null &&
         oldWidget.currentLocation != widget.currentLocation) {
       setState(() {
@@ -253,18 +301,20 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
             },
           ),
           children: [
-            // Tile layer - use cached provider when ready, network otherwise
+            // Tile layer - use offline, cached, or network provider based on settings
             TileLayer(
               urlTemplate: currentTileLayer['url']!,
               userAgentPackageName: 'com.example.smart_bike_tracker',
               maxNativeZoom: 19,
-              tileProvider: _cacheInitialized 
-                ? CachedTileProvider(
-                    dio: _dio,
-                    maxStale: const Duration(days: 7),
-                    store: _cacheStore,
-                  )
-                : NetworkTileProvider(),
+              tileProvider: _useOfflineMode && (_offlineMapInfo?['exists'] ?? false)
+                ? OfflineTileProvider(fallbackUrl: currentTileLayer['url']!)
+                : (_cacheInitialized 
+                    ? CachedTileProvider(
+                        dio: _dio,
+                        maxStale: const Duration(days: 7),
+                        store: _cacheStore,
+                      )
+                    : NetworkTileProvider()),
               errorTileCallback: (tile, error, stackTrace) {
                 // Only log errors in debug mode to reduce overhead
                 assert(() {
@@ -331,6 +381,24 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 ),
               ),
               const SizedBox(height: 8),
+              // Offline mode toggle (only show if offline maps exist)
+              if (_offlineMapInfo?['exists'] ?? false) ...[              
+                FloatingActionButton(
+                  mini: true,
+                  onPressed: _toggleOfflineMode,
+                  backgroundColor: _useOfflineMode 
+                    ? theme.colorScheme.primaryContainer 
+                    : theme.colorScheme.surface,
+                  tooltip: _useOfflineMode ? 'Using offline maps' : 'Using online maps',
+                  child: Icon(
+                    _useOfflineMode ? Icons.offline_pin : Icons.cloud_outlined,
+                    color: _useOfflineMode 
+                      ? theme.colorScheme.onPrimaryContainer 
+                      : theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               // Center on location button
               FloatingActionButton(
                 mini: true,
