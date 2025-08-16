@@ -7,7 +7,7 @@
 #include "ble_protocol.h"
 
 // Pin Definitions
-#define LED_PIN 2          // Built-in LED for status indication
+#define IR_SENSOR_PIN 25   // HW-201 IR sensor input
 
 // BLE Service and Characteristic Pointers
 BLEServer* pServer = NULL;
@@ -31,8 +31,10 @@ struct {
 // Status Structure
 struct {
   bool bleConnected;
+  bool userPresent;         // IR sensor status
   char lastConfig[100];     // Last received config for debugging
   unsigned long configTime; // Time of last config update
+  String deviceMode;        // Current device mode (READY, AWAY, DISCONNECTED)
 } status;
 
 // Forward declarations
@@ -46,14 +48,13 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
       status.bleConnected = true;
-      digitalWrite(LED_PIN, HIGH);  // LED on when connected
       Serial.println("✅ BLE Client Connected");
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
       status.bleConnected = false;
-      digitalWrite(LED_PIN, LOW);   // LED off when disconnected
+      status.deviceMode = "DISCONNECTED";
       Serial.println("❌ BLE Client Disconnected");
     }
 };
@@ -228,18 +229,43 @@ void saveConfiguration() {
 }
 
 // ============================================================================
+// Sensor Reading
+// ============================================================================
+void readSensors() {
+  // Read IR sensor (HW-201) - LOW when human detected, HIGH when no detection
+  status.userPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
+  
+  // Determine device mode based on connection and IR sensor
+  if (status.bleConnected) {
+    if (status.userPresent) {
+      status.deviceMode = "READY";  // User is present, ready to ride
+    } else {
+      status.deviceMode = "AWAY";   // User stepped away from bike
+    }
+  } else {
+    status.deviceMode = "DISCONNECTED";  // BLE not connected
+  }
+}
+
+// ============================================================================
 // Status Update
 // ============================================================================
 void updateStatusCharacteristic() {
+  // Read sensors before updating status
+  readSensors();
+  
   if (pStatusChar) {
-    char jsonBuffer[256];
+    char jsonBuffer[350];
     snprintf(jsonBuffer, sizeof(jsonBuffer),
-             "{\"ble_connected\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,\"last_config_time\":%lu}",
+             "{\"ble_connected\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,"
+             "\"user_present\":%s,\"mode\":\"%s\",\"last_config_time\":%lu}",
              status.bleConnected ? "true" : "false",
              strlen(config.phoneNumber) > 0 ? "true" : "false",
              config.phoneNumber,
              config.updateInterval,
              config.alertEnabled ? "true" : "false",
+             status.userPresent ? "true" : "false",
+             status.deviceMode.c_str(),
              status.configTime);
     
     pStatusChar->setValue(jsonBuffer);
@@ -247,6 +273,12 @@ void updateStatusCharacteristic() {
     if (deviceConnected) {
       pStatusChar->notify();
       Serial.println("📤 Status update sent to app");
+      
+      // Debug output
+      Serial.print("  👤 User: ");
+      Serial.print(status.userPresent ? "Present" : "Away");
+      Serial.print(" | Mode: ");
+      Serial.println(status.deviceMode);
     }
   }
 }
@@ -323,12 +355,14 @@ void setup() {
   Serial.println("🚴 Smart Bike Tracker - BLE Config Test");
   Serial.println("========================================\n");
   
-  // Configure LED
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  // Configure IR sensor pin
+  pinMode(IR_SENSOR_PIN, INPUT);
+  Serial.println("🔦 IR sensor configured on pin 25");
   
   // Initialize status
   status.bleConnected = false;
+  status.userPresent = false;
+  status.deviceMode = "DISCONNECTED";
   status.configTime = 0;
   memset(status.lastConfig, 0, sizeof(status.lastConfig));
   
@@ -366,17 +400,22 @@ void loop() {
   // Periodic status update (every 10 seconds when connected)
   if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
     lastStatusUpdate = millis();
+    
+    // Read sensors and update status
+    readSensors();
     updateStatusCharacteristic();
     
-    // Print current configuration
-    Serial.println("📊 Current Configuration:");
-    Serial.print("  Phone: ");
+    // Print current status
+    Serial.println("📊 Current Status:");
+    Serial.print("  👤 IR Sensor: User ");
+    Serial.println(status.userPresent ? "Present (READY)" : "Away");
+    Serial.print("  📍 Mode: ");
+    Serial.println(status.deviceMode);
+    Serial.print("  📞 Phone: ");
     Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
-    Serial.print("  Interval: ");
+    Serial.print("  ⏱️ Interval: ");
     Serial.print(config.updateInterval);
     Serial.println(" seconds");
-    Serial.print("  Alerts: ");
-    Serial.println(config.alertEnabled ? "Enabled" : "Disabled");
   }
   
   delay(10);
