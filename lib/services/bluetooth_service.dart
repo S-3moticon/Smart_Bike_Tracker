@@ -256,6 +256,63 @@ class BikeBluetoothService {
     });
   }
   
+  Future<bool> sendConfiguration({
+    required String phoneNumber,
+    required int updateInterval,
+    required bool alertEnabled,
+  }) async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE');
+        return false;
+      }
+      
+      // Discover services if not already done
+      final services = await _connectedDevice!.discoverServices();
+      
+      // Find our service
+      for (var service in services) {
+        if (service.uuid.toString().toLowerCase() == BleProtocol.serviceUuid.toLowerCase()) {
+          // Find config characteristic
+          for (var characteristic in service.characteristics) {
+            if (characteristic.uuid.toString().toLowerCase() == BleProtocol.configCharUuid.toLowerCase()) {
+              // Create JSON config data
+              final configData = DataFormats.createConfigData(
+                phoneNumber: phoneNumber,
+                updateInterval: updateInterval,
+                alertEnabled: alertEnabled,
+              );
+              
+              // Convert to JSON string
+              final jsonString = '{'
+                '"phone_number":"$phoneNumber",'
+                '"update_interval":$updateInterval,'
+                '"alert_enabled":$alertEnabled'
+              '}';
+              
+              developer.log('Sending config: $jsonString', name: 'BLE');
+              
+              // Write to characteristic
+              await characteristic.write(
+                jsonString.codeUnits,
+                withoutResponse: false,
+              );
+              
+              developer.log('Configuration sent successfully', name: 'BLE');
+              return true;
+            }
+          }
+        }
+      }
+      
+      developer.log('Config characteristic not found', name: 'BLE');
+      return false;
+    } catch (e) {
+      developer.log('Error sending configuration: $e', name: 'BLE', error: e);
+      return false;
+    }
+  }
+  
   Future<void> disconnect() async {
     _reconnectionTimer?.cancel();
     _isReconnecting = false;

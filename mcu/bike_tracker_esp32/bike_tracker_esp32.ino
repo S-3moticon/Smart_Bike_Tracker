@@ -1,169 +1,231 @@
-// ESP32 BLE Libraries for Bluetooth Low Energy functionality
+// ESP32 BLE Libraries
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-// I2C library for sensor communication
-#include <Wire.h>
-// Custom header with BLE protocol definitions
+#include <Preferences.h>  // For persistent storage
 #include "ble_protocol.h"
 
-// Pin Definitions for Hardware Connections
-#define GPS_RX_PIN 16      // UART RX pin for SIM7070G GPS module
-#define GPS_TX_PIN 17      // UART TX pin for SIM7070G GPS module  
-#define IR_SENSOR_PIN 25   // Digital input for IR proximity sensor
+// Pin Definitions
 #define LED_PIN 2          // Built-in LED for status indication
 
-// I2C pins for LSM6DSL motion sensor communication
-#define I2C_SDA 21         // I2C data line
-#define I2C_SCL 22         // I2C clock line
-
 // BLE Service and Characteristic Pointers
-BLEServer* pServer = NULL;                    // BLE server instance
-BLECharacteristic* pLocationChar = NULL;      // Characteristic for GPS location data
-BLECharacteristic* pConfigChar = NULL;        // Characteristic for app configuration
-BLECharacteristic* pStatusChar = NULL;        // Characteristic for device status
-BLECharacteristic* pCommandChar = NULL;       // Characteristic for commands from app
+BLEServer* pServer = NULL;
+BLECharacteristic* pConfigChar = NULL;
+BLECharacteristic* pStatusChar = NULL;
 
-// Connection State Tracking
-bool deviceConnected = false;      // Current BLE connection status
-bool oldDeviceConnected = false;   // Previous connection status for state change detection
+// Connection State
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
 
-// Data Structures (defined in ble_protocol.h)
-LocationData currentLocation = {0};           // Stores current GPS location data
-ConfigData config = {"", 300, true};          // Stores configuration (phone, interval, alerts)
-StatusData status = {false, false, false, MODE_IDLE}; // Stores device status
+// Configuration Storage
+Preferences preferences;  // Non-volatile storage
 
-// Timing Variables for Non-blocking Operations
-unsigned long lastLocationUpdate = 0;  // Last time GPS location was updated
-unsigned long lastMotionCheck = 0;     // Last time motion/theft was checked
-unsigned long lastSMSAlert = 0;        // Last time SMS alert was sent
+// Configuration Structure
+struct {
+  char phoneNumber[20];     // Phone number for SMS alerts
+  uint16_t updateInterval;  // Update interval in seconds
+  bool alertEnabled;        // Alert enabled flag
+} config;
 
-// RTC Memory Variable - Survives deep sleep but not power loss
-RTC_DATA_ATTR int bootCount = 0;       // Counts number of device boots
+// Status Structure
+struct {
+  bool bleConnected;
+  char lastConfig[100];     // Last received config for debugging
+  unsigned long configTime; // Time of last config update
+} status;
 
-// BLE Server Callbacks - Handles connection events
+// Forward declarations
+void saveConfiguration();
+void updateStatusCharacteristic();
+
+// ============================================================================
+// BLE Server Callbacks
+// ============================================================================
 class MyServerCallbacks: public BLEServerCallbacks {
-    // Called when a BLE client (phone app) connects
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
       status.bleConnected = true;
-      Serial.println("BLE Client Connected");
+      digitalWrite(LED_PIN, HIGH);  // LED on when connected
+      Serial.println("✅ BLE Client Connected");
     };
 
-    // Called when a BLE client disconnects
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
       status.bleConnected = false;
-      Serial.println("BLE Client Disconnected");
+      digitalWrite(LED_PIN, LOW);   // LED off when disconnected
+      Serial.println("❌ BLE Client Disconnected");
     }
 };
 
-// Configuration Characteristic Callbacks - Handles configuration updates from app
+// ============================================================================
+// Configuration Characteristic Callbacks
+// ============================================================================
 class ConfigCharCallbacks: public BLECharacteristicCallbacks {
-    // Called when app writes configuration data
     void onWrite(BLECharacteristic *pCharacteristic) {
-      // Get value as Arduino String directly
       String value = pCharacteristic->getValue();
+      
       if (value.length() > 0) {
-        Serial.println("Config received:");
-        Serial.println(value);
+        Serial.println("\n📥 Configuration Received:");
+        Serial.println("=====================================");
+        Serial.print("Raw data: ");
+        Serial.println(value.c_str());
+        Serial.print("Data length: ");
+        Serial.println(value.length());
         
-        // Simple JSON parsing without ArduinoJson library
-        // Expected format: {"phone_number":"+1234567890","update_interval":300,"alert_enabled":true}
+        // Store raw config for debugging
+        strncpy(status.lastConfig, value.c_str(), sizeof(status.lastConfig) - 1);
+        status.configTime = millis();
         
-        // Parse phone number
-        int phoneStart = value.indexOf("\"phone_number\":\"") + 16;
-        int phoneEnd = value.indexOf("\"", phoneStart);
-        if (phoneStart > 15 && phoneEnd > phoneStart) {
-          String phoneStr = value.substring(phoneStart, phoneEnd);
-          phoneStr.toCharArray(config.phoneNumber, 16);
+        // Parse JSON manually
+        String jsonStr = String(value.c_str());
+        bool configChanged = false;
+        
+        // Extract phone number
+        int phoneStart = jsonStr.indexOf("\"phone_number\":\"");
+        if (phoneStart >= 0) {
+          phoneStart += 16;  // Length of "phone_number":"
+          int phoneEnd = jsonStr.indexOf("\"", phoneStart);
+          if (phoneEnd > phoneStart) {
+            String phone = jsonStr.substring(phoneStart, phoneEnd);
+            if (phone.length() > 0 && phone.length() < sizeof(config.phoneNumber)) {
+              strncpy(config.phoneNumber, phone.c_str(), sizeof(config.phoneNumber) - 1);
+              config.phoneNumber[sizeof(config.phoneNumber) - 1] = '\0';
+              configChanged = true;
+              Serial.print("📞 Phone Number: ");
+              Serial.println(config.phoneNumber);
+            }
+          }
         }
         
-        // Parse update interval
-        int intervalStart = value.indexOf("\"update_interval\":") + 18;
-        int intervalEnd = value.indexOf(",", intervalStart);
-        if (intervalEnd == -1) intervalEnd = value.indexOf("}", intervalStart);
-        if (intervalStart > 17 && intervalEnd > intervalStart) {
-          String intervalStr = value.substring(intervalStart, intervalEnd);
-          config.updateInterval = intervalStr.toInt();
+        // Extract update interval
+        int intervalStart = jsonStr.indexOf("\"update_interval\":");
+        if (intervalStart >= 0) {
+          intervalStart += 18;  // Length of "update_interval":
+          int intervalEnd = jsonStr.indexOf(",", intervalStart);
+          if (intervalEnd < 0) {
+            intervalEnd = jsonStr.indexOf("}", intervalStart);
+          }
+          if (intervalEnd > intervalStart) {
+            String interval = jsonStr.substring(intervalStart, intervalEnd);
+            interval.trim();
+            int newInterval = interval.toInt();
+            if (newInterval >= 10 && newInterval <= 3600) {  // Valid range: 10s to 1 hour
+              config.updateInterval = newInterval;
+              configChanged = true;
+              Serial.print("⏱️ Update Interval: ");
+              Serial.print(config.updateInterval);
+              Serial.println(" seconds");
+            }
+          }
         }
         
-        // Parse alert enabled
-        int alertStart = value.indexOf("\"alert_enabled\":");
-        if (alertStart > 0) {
-          config.alertEnabled = value.indexOf("true", alertStart) > 0;
+        // Extract alert enabled flag
+        int alertStart = jsonStr.indexOf("\"alert_enabled\":");
+        if (alertStart >= 0) {
+          alertStart += 16;  // Length of "alert_enabled":
+          String alertSection = jsonStr.substring(alertStart, alertStart + 10);
+          config.alertEnabled = (alertSection.indexOf("true") >= 0);
+          configChanged = true;
+          Serial.print("🚨 Alerts Enabled: ");
+          Serial.println(config.alertEnabled ? "Yes" : "No");
         }
         
-        // Print parsed configuration
-        Serial.print("Phone: ");
-        Serial.println(config.phoneNumber);
-        Serial.print("Update Interval: ");
-        Serial.println(config.updateInterval);
-        Serial.print("Alert Enabled: ");
-        Serial.println(config.alertEnabled);
+        // Save configuration to persistent storage if changed
+        if (configChanged) {
+          saveConfiguration();
+          Serial.println("💾 Configuration saved to flash memory");
+        }
+        
+        Serial.println("=====================================\n");
+        
+        // Update status characteristic
+        updateStatusCharacteristic();
       }
     }
 };
 
 // ============================================================================
-// SETUP FUNCTION - Runs once when ESP32 starts or resets
+// Configuration Management
 // ============================================================================
-void setup() {
-  // Initialize serial communication for debugging
-  Serial.begin(115200);
-  Serial.println("Smart Bike Tracker ESP32 Starting...");
+void loadConfiguration() {
+  preferences.begin("bike-tracker", false);
   
-  // Track boot count (survives deep sleep)
-  bootCount++;
-  Serial.print("Boot number: ");
-  Serial.println(bootCount);
+  // Load saved configuration or use defaults
+  preferences.getString("phone", config.phoneNumber, sizeof(config.phoneNumber));
+  config.updateInterval = preferences.getUShort("interval", 300);  // Default 5 minutes
+  config.alertEnabled = preferences.getBool("alerts", true);       // Default enabled
   
-  // Configure GPIO pins
-  pinMode(LED_PIN, OUTPUT);        // LED for visual theft alert
-  pinMode(IR_SENSOR_PIN, INPUT);   // IR sensor for human detection
+  preferences.end();
   
-  // Initialize I2C bus for LSM6DSL motion sensor
-  Wire.begin(I2C_SDA, I2C_SCL);
+  Serial.println("📂 Configuration loaded from storage:");
+  Serial.print("  Phone: ");
+  Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
+  Serial.print("  Interval: ");
+  Serial.print(config.updateInterval);
+  Serial.println(" seconds");
+  Serial.print("  Alerts: ");
+  Serial.println(config.alertEnabled ? "Enabled" : "Disabled");
+}
+
+void saveConfiguration() {
+  preferences.begin("bike-tracker", false);
   
-  // Initialize Bluetooth Low Energy
-  initBLE();
+  preferences.putString("phone", config.phoneNumber);
+  preferences.putUShort("interval", config.updateInterval);
+  preferences.putBool("alerts", config.alertEnabled);
   
-  Serial.println("Setup complete. Waiting for connections...");
+  preferences.end();
 }
 
 // ============================================================================
-// BLE INITIALIZATION - Sets up BLE server and characteristics
+// Status Update
+// ============================================================================
+void updateStatusCharacteristic() {
+  if (pStatusChar) {
+    char jsonBuffer[256];
+    snprintf(jsonBuffer, sizeof(jsonBuffer),
+             "{\"ble_connected\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,\"last_config_time\":%lu}",
+             status.bleConnected ? "true" : "false",
+             strlen(config.phoneNumber) > 0 ? "true" : "false",
+             config.phoneNumber,
+             config.updateInterval,
+             config.alertEnabled ? "true" : "false",
+             status.configTime);
+    
+    pStatusChar->setValue(jsonBuffer);
+    
+    if (deviceConnected) {
+      pStatusChar->notify();
+      Serial.println("📤 Status update sent to app");
+    }
+  }
+}
+
+// ============================================================================
+// BLE Initialization
 // ============================================================================
 void initBLE() {
-  // Generate unique device name using MAC address
-  // Format: BikeTrk_XXXX where XXXX is last 2 bytes of MAC
+  // Generate unique device name
   char deviceName[32];
   sprintf(deviceName, "%s%02X%02X", DEVICE_NAME_PREFIX, 
           (uint8_t)(ESP.getEfuseMac() >> 8), 
           (uint8_t)(ESP.getEfuseMac()));
   
-  // Initialize BLE with unique device name
+  Serial.print("🔷 Initializing BLE as: ");
+  Serial.println(deviceName);
+  
+  // Initialize BLE
   BLEDevice::init(deviceName);
   
-  // Create BLE server and set connection callbacks
+  // Create BLE server
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   
-  // Create BLE service with our custom UUID
+  // Create BLE service
   BLEService *pService = pServer->createService(SERVICE_UUID);
   
-  // Create Location characteristic (READ, NOTIFY)
-  // App reads GPS location from this characteristic
-  pLocationChar = pService->createCharacteristic(
-                    LOCATION_CHAR_UUID,
-                    BLECharacteristic::PROPERTY_READ |
-                    BLECharacteristic::PROPERTY_NOTIFY
-                  );
-  pLocationChar->addDescriptor(new BLE2902()); // Enable notifications
-  
   // Create Config characteristic (WRITE)
-  // App writes phone number and settings to this characteristic
   pConfigChar = pService->createCharacteristic(
                     CONFIG_CHAR_UUID,
                     BLECharacteristic::PROPERTY_WRITE
@@ -171,182 +233,93 @@ void initBLE() {
   pConfigChar->setCallbacks(new ConfigCharCallbacks());
   
   // Create Status characteristic (READ, NOTIFY)
-  // Reports device status (motion, user presence, mode)
   pStatusChar = pService->createCharacteristic(
                     STATUS_CHAR_UUID,
                     BLECharacteristic::PROPERTY_READ |
                     BLECharacteristic::PROPERTY_NOTIFY
                   );
-  pStatusChar->addDescriptor(new BLE2902()); // Enable notifications
+  pStatusChar->addDescriptor(new BLE2902());
   
-  // Create Command characteristic (WRITE)
-  // App sends commands (e.g., request immediate location)
-  pCommandChar = pService->createCharacteristic(
-                    COMMAND_CHAR_UUID,
-                    BLECharacteristic::PROPERTY_WRITE
-                  );
-  
-  // Start the BLE service
+  // Start service
   pService->start();
   
-  // Configure BLE advertising
+  // Configure advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);  // Advertise our service
-  pAdvertising->setScanResponse(true);         // Allow scan response
-  pAdvertising->setMinPreferred(0x06);         // Min connection interval 7.5ms
-  pAdvertising->setMinPreferred(0x12);         // Max connection interval 15ms
-  BLEDevice::startAdvertising();               // Start advertising
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // 7.5ms
+  pAdvertising->setMinPreferred(0x12);  // 15ms
+  BLEDevice::startAdvertising();
   
-  Serial.print("BLE Device Name: ");
-  Serial.println(deviceName);
+  Serial.println("✅ BLE Service started and advertising");
 }
 
 // ============================================================================
-// UPDATE LOCATION - Sends GPS location data via BLE
+// SETUP
 // ============================================================================
-void updateLocationCharacteristic() {
-  if (deviceConnected && pLocationChar) {
-    // Create JSON string using char array for better compatibility
-    char jsonBuffer[256];
-    snprintf(jsonBuffer, sizeof(jsonBuffer), 
-             "{\"lat\":%.6f,\"lng\":%.6f,\"timestamp\":%lu,\"speed\":%.1f,\"satellites\":%d,\"battery\":%d}",
-             currentLocation.lat, 
-             currentLocation.lng, 
-             currentLocation.timestamp,
-             currentLocation.speed,
-             currentLocation.satellites,
-             currentLocation.battery);
-    
-    // Send location data to connected app
-    pLocationChar->setValue(jsonBuffer);
-    pLocationChar->notify();
-    
-    Serial.print("Location sent: ");
-    Serial.println(jsonBuffer);
-  }
-}
-
-// ============================================================================
-// UPDATE STATUS - Sends device status via BLE
-// ============================================================================
-void updateStatusCharacteristic() {
-  if (pStatusChar) {
-    // Convert mode enum to string
-    const char* modeStr = "IDLE";
-    switch(status.mode) {
-      case MODE_TRACKING: modeStr = "TRACKING"; break;
-      case MODE_ALERT: modeStr = "ALERT"; break;
-      case MODE_SLEEP: modeStr = "SLEEP"; break;
-    }
-    
-    // Create JSON string using char array for better compatibility
-    char jsonBuffer[200];
-    snprintf(jsonBuffer, sizeof(jsonBuffer),
-             "{\"ble_connected\":%s,\"motion_detected\":%s,\"user_present\":%s,\"mode\":\"%s\"}",
-             status.bleConnected ? "true" : "false",
-             status.motionDetected ? "true" : "false",
-             status.userPresent ? "true" : "false",
-             modeStr);
-    
-    // Update characteristic value
-    pStatusChar->setValue(jsonBuffer);
-    
-    // Send notification if connected
-    if (deviceConnected) {
-      pStatusChar->notify();
-    }
-  }
-}
-
-// ============================================================================
-// USER PRESENCE CHECK - Reads IR sensor to detect if user is on bike
-// ============================================================================
-bool checkUserPresence() {
-  // IR sensor returns HIGH when object (user) is detected
-  return digitalRead(IR_SENSOR_PIN) == HIGH;
-}
-
-// ============================================================================
-// THEFT DETECTION - Main anti-theft logic
-// ============================================================================
-void checkTheftCondition() {
-  // Check if user is present using IR sensor
-  status.userPresent = checkUserPresence();
+void setup() {
+  Serial.begin(115200);
+  delay(1000);  // Give serial time to initialize
   
-  // THEFT CONDITION: BLE disconnected AND (motion detected OR user not present)
-  if (!status.bleConnected && (status.motionDetected || !status.userPresent)) {
-    if (status.mode != MODE_ALERT) {
-      Serial.println("THEFT DETECTED!");
-      status.mode = MODE_ALERT;
-      digitalWrite(LED_PIN, HIGH);  // Turn on LED alert
-      // SMS alert will be sent in main loop
-    }
-  } 
-  // RECOVERY CONDITION: BLE connected AND user present
-  else if (status.bleConnected && status.userPresent) {
-    if (status.mode == MODE_ALERT) {
-      Serial.println("Device recovered");
-      status.mode = MODE_IDLE;
-      digitalWrite(LED_PIN, LOW);   // Turn off LED alert
-    }
-  }
+  Serial.println("\n\n========================================");
+  Serial.println("🚴 Smart Bike Tracker - BLE Config Test");
+  Serial.println("========================================\n");
+  
+  // Configure LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  
+  // Initialize status
+  status.bleConnected = false;
+  status.configTime = 0;
+  memset(status.lastConfig, 0, sizeof(status.lastConfig));
+  
+  // Load saved configuration
+  loadConfiguration();
+  
+  // Initialize BLE
+  initBLE();
+  
+  Serial.println("\n📡 Ready for BLE connections...\n");
 }
 
 // ============================================================================
-// MAIN LOOP - Runs continuously after setup
+// MAIN LOOP
 // ============================================================================
 void loop() {
-  unsigned long currentMillis = millis();
+  static unsigned long lastStatusUpdate = 0;
   
-  // ===== CHECK THEFT CONDITION EVERY SECOND =====
-  if (currentMillis - lastMotionCheck >= 1000) {
-    lastMotionCheck = currentMillis;
-    
-    // Check for theft based on BLE connection, motion, and user presence
-    checkTheftCondition();
-    
-    // Update device status characteristic for app
+  // Handle disconnection
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500);
+    pServer->startAdvertising();
+    Serial.println("🔄 Restarting advertising...");
+    oldDeviceConnected = deviceConnected;
+  }
+  
+  // Handle new connection
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+    Serial.println("🔗 Connection established");
+    // Send initial status
     updateStatusCharacteristic();
   }
   
-  // ===== UPDATE GPS LOCATION AT CONFIGURED INTERVAL =====
-  if (currentMillis - lastLocationUpdate >= (config.updateInterval * 1000)) {
-    lastLocationUpdate = currentMillis;
+  // Periodic status update (every 10 seconds when connected)
+  if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
+    lastStatusUpdate = millis();
+    updateStatusCharacteristic();
     
-    // TEMPORARY: Generate fake GPS data for testing
-    // TODO: Replace with actual GPS data from SIM7070G module
-    currentLocation.lat = 37.7749 + (random(100) - 50) * 0.0001;
-    currentLocation.lng = -122.4194 + (random(100) - 50) * 0.0001;
-    currentLocation.timestamp = millis() / 1000;
-    currentLocation.speed = random(0, 30);
-    currentLocation.satellites = random(4, 12);
-    currentLocation.battery = 85;
-    
-    // Send location update via BLE if connected
-    updateLocationCharacteristic();
-    
-    // Send SMS alert if in theft mode
-    if (status.mode == MODE_ALERT && config.alertEnabled) {
-      // TODO: Implement actual SMS sending via SIM7070G
-      Serial.println("Would send SMS alert here");
-      // Format: "ALERT: Bike at LAT,LNG - https://maps.google.com/?q=LAT,LNG"
-    }
+    // Print current configuration
+    Serial.println("📊 Current Configuration:");
+    Serial.print("  Phone: ");
+    Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
+    Serial.print("  Interval: ");
+    Serial.print(config.updateInterval);
+    Serial.println(" seconds");
+    Serial.print("  Alerts: ");
+    Serial.println(config.alertEnabled ? "Enabled" : "Disabled");
   }
   
-  // ===== HANDLE BLE DISCONNECTION =====
-  // Restart advertising when client disconnects
-  if (!deviceConnected && oldDeviceConnected) {
-    delay(500);  // Give BLE stack time to clean up
-    pServer->startAdvertising();
-    Serial.println("Start advertising");
-    oldDeviceConnected = deviceConnected;
-  }
-  
-  // ===== HANDLE BLE CONNECTION =====
-  // Update connection state tracking
-  if (deviceConnected && !oldDeviceConnected) {
-    oldDeviceConnected = deviceConnected;
-  }
-  // Small delay to prevent watchdog timer issues
   delay(10);
 }
