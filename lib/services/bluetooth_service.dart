@@ -554,18 +554,12 @@ class BikeBluetoothService {
       result['last_config_time'] = int.tryParse(configTimeMatch.group(1) ?? '0') ?? 0;
     }
     
-    // For future: Add IR sensor status when MCU implements it
     // Extract user_present (IR sensor)
     if (jsonString.contains('"user_present":')) {
       result['user_present'] = jsonString.contains('"user_present":true');
     }
     
-    // Extract motion_detected
-    if (jsonString.contains('"motion_detected":')) {
-      result['motion_detected'] = jsonString.contains('"motion_detected":true');
-    }
-    
-    // Extract device mode
+    // Extract device mode (READY, AWAY, DISCONNECTED)
     final modeMatch = RegExp(r'"mode":"([^"]*)"').firstMatch(jsonString);
     if (modeMatch != null) {
       result['mode'] = modeMatch.group(1) ?? 'UNKNOWN';

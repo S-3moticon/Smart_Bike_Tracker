@@ -164,28 +164,43 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
                 value: _deviceStatus!['user_present'] == true ? 'Detected' : 'Not Detected',
                 valueColor: _deviceStatus!['user_present'] == true 
                   ? theme.colorScheme.primary 
-                  : theme.colorScheme.error,
+                  : Colors.orange,
               ),
               
-              // Motion Detection
-              if (_deviceStatus!.containsKey('motion_detected'))
-                _buildStatusItem(
-                  icon: Icons.vibration,
-                  label: 'Motion',
-                  value: _deviceStatus!['motion_detected'] == true ? 'Detected' : 'None',
-                  valueColor: _deviceStatus!['motion_detected'] == true 
-                    ? Colors.orange 
-                    : theme.colorScheme.onSurfaceVariant,
+              // Device Mode - prominent display
+              if (_deviceStatus!.containsKey('mode')) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _getColorForMode(_deviceStatus!['mode']).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _getColorForMode(_deviceStatus!['mode']),
+                      width: 2,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _getIconForMode(_deviceStatus!['mode']),
+                        color: _getColorForMode(_deviceStatus!['mode']),
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Status: ${_getDisplayMode(_deviceStatus!['mode'])}',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: _getColorForMode(_deviceStatus!['mode']),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              
-              // Device Mode
-              if (_deviceStatus!.containsKey('mode'))
-                _buildStatusItem(
-                  icon: Icons.security,
-                  label: 'Mode',
-                  value: _deviceStatus!['mode'] ?? 'UNKNOWN',
-                  valueColor: _getColorForMode(_deviceStatus!['mode']),
-                ),
+                const SizedBox(height: 8),
+              ],
               
               const Divider(),
               
@@ -238,16 +253,40 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
   Color _getColorForMode(String? mode) {
     final theme = Theme.of(context);
     switch (mode) {
-      case 'IDLE':
-        return theme.colorScheme.primary;
-      case 'TRACKING':
-        return Colors.blue;
-      case 'ALERT':
-        return Colors.red;
-      case 'SLEEP':
-        return theme.colorScheme.onSurfaceVariant;
+      case 'READY':
+        return Colors.green;
+      case 'AWAY':
+        return Colors.orange;
+      case 'DISCONNECTED':
+        return theme.colorScheme.error;
       default:
         return theme.colorScheme.onSurface;
+    }
+  }
+  
+  IconData _getIconForMode(String? mode) {
+    switch (mode) {
+      case 'READY':
+        return Icons.check_circle;
+      case 'AWAY':
+        return Icons.warning;
+      case 'DISCONNECTED':
+        return Icons.wifi_off;
+      default:
+        return Icons.help_outline;
+    }
+  }
+  
+  String _getDisplayMode(String? mode) {
+    switch (mode) {
+      case 'READY':
+        return 'Ready to Ride';
+      case 'AWAY':
+        return 'User Away';
+      case 'DISCONNECTED':
+        return 'Disconnected';
+      default:
+        return mode ?? 'Unknown';
     }
   }
   
