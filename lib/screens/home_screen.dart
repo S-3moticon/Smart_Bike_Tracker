@@ -12,6 +12,7 @@ import '../models/location_data.dart';
 import '../widgets/location_map.dart';
 import '../widgets/device_status_card.dart';
 import '../widgets/map_download_dialog.dart';
+import '../widgets/custom_scroll_physics.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -620,16 +621,34 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 ],
                               ),
                             )
-                          : RawScrollbar(
-                            thumbVisibility: true, // Always show scrollbar
-                            thickness: 8.0,
-                            radius: const Radius.circular(4),
-                            thumbColor: theme.colorScheme.primary.withOpacity(0.6),
-                            interactive: true, // Allow dragging the scrollbar
-                            child: ListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              itemCount: _locationHistory.length,
-                              itemBuilder: (context, index) {
+                          : NotificationListener<OverscrollNotification>(
+                            onNotification: (notification) {
+                              // When overscrolling at the bottom, let parent handle it
+                              if (notification.overscroll > 0 && notification.metrics.pixels >= notification.metrics.maxScrollExtent) {
+                                // Find the parent ScrollController and scroll it
+                                final scrollController = PrimaryScrollController.of(context);
+                                if (scrollController != null && scrollController.hasClients) {
+                                  scrollController.animateTo(
+                                    scrollController.offset + notification.overscroll,
+                                    duration: const Duration(milliseconds: 100),
+                                    curve: Curves.easeOut,
+                                  );
+                                }
+                                return true;
+                              }
+                              return false;
+                            },
+                            child: RawScrollbar(
+                              thumbVisibility: true, // Always show scrollbar
+                              thickness: 8.0,
+                              radius: const Radius.circular(4),
+                              thumbColor: theme.colorScheme.primary.withOpacity(0.6),
+                              interactive: true, // Allow dragging the scrollbar
+                              child: ListView.builder(
+                                physics: const BouncingScrollPhysics(), // Use bouncing for better feel
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                itemCount: _locationHistory.length,
+                                itemBuilder: (context, index) {
                                 final location = _locationHistory[index];
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 8),
@@ -716,6 +735,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             ),
                           ),
                         ),
+                          ),
                       ],
                     ),
                   ),
