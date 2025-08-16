@@ -285,17 +285,28 @@ class BikeBluetoothService {
       // Find our service
       for (var service in services) {
         final serviceUuid = service.uuid.toString().toLowerCase();
-        developer.log('Checking service: $serviceUuid against ${BleProtocol.serviceUuid.toLowerCase()}', name: 'BLE-Config');
         
-        if (serviceUuid == BleProtocol.serviceUuid.toLowerCase()) {
+        // Handle both short (16-bit) and full (128-bit) UUID formats
+        // Short form: "1234" should match full form: "00001234-0000-1000-8000-00805f9b34fb"
+        final targetUuid = BleProtocol.serviceUuid.toLowerCase();
+        final shortTargetUuid = targetUuid.substring(4, 8); // Extract "1234" from full UUID
+        
+        developer.log('Checking service: $serviceUuid against $targetUuid (short: $shortTargetUuid)', name: 'BLE-Config');
+        
+        if (serviceUuid == targetUuid || serviceUuid == shortTargetUuid) {
           developer.log('Found bike tracker service!', name: 'BLE-Config');
           
           // Find config characteristic
           for (var characteristic in service.characteristics) {
             final charUuid = characteristic.uuid.toString().toLowerCase();
-            developer.log('Checking char: $charUuid against ${BleProtocol.configCharUuid.toLowerCase()}', name: 'BLE-Config');
             
-            if (charUuid == BleProtocol.configCharUuid.toLowerCase()) {
+            // Handle both short and full UUID formats for characteristics
+            final targetCharUuid = BleProtocol.configCharUuid.toLowerCase();
+            final shortTargetCharUuid = targetCharUuid.substring(4, 8); // Extract "1236" from full UUID
+            
+            developer.log('Checking char: $charUuid against $targetCharUuid (short: $shortTargetCharUuid)', name: 'BLE-Config');
+            
+            if (charUuid == targetCharUuid || charUuid == shortTargetCharUuid) {
               developer.log('Found config characteristic!', name: 'BLE-Config');
               
               // Properly format JSON string
