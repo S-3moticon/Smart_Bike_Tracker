@@ -27,6 +27,11 @@ class BikeBluetoothService {
   String? _lastConnectedDeviceId;
   bool _isReconnecting = false;
   
+  // Status updates stream
+  StreamSubscription? _statusSubscription;
+  final _deviceStatusController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get deviceStatus => _deviceStatusController.stream;
+  
   static const String _prefKeyLastDevice = 'last_connected_device_id';
   static const String _prefKeyLastDeviceName = 'last_connected_device_name';
   static const String _prefKeyAutoConnect = 'auto_connect_enabled';
@@ -186,6 +191,9 @@ class BikeBluetoothService {
       
       // Discover services after connection
       await _discoverServices(bikeDevice.device);
+      
+      // Subscribe to status updates
+      await subscribeToStatusUpdates();
       
       // Save device info for auto-connect
       await _saveLastConnectedDevice(bikeDevice.id, bikeDevice.name);
@@ -384,12 +392,195 @@ class BikeBluetoothService {
     }
   }
   
+  Future<bool> subscribeToStatusUpdates() async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-Status');
+        return false;
+      }
+      
+      developer.log('Subscribing to status updates...', name: 'BLE-Status');
+      
+      // Discover services if not already done
+      final services = await _connectedDevice!.discoverServices();
+      
+      // Find our service
+      for (var service in services) {
+        final serviceUuid = service.uuid.toString().toLowerCase();
+        final targetUuid = BleProtocol.serviceUuid.toLowerCase();
+        final shortTargetUuid = targetUuid.substring(4, 8);
+        
+        if (serviceUuid == targetUuid || serviceUuid == shortTargetUuid) {
+          developer.log('Found bike tracker service for status', name: 'BLE-Status');
+          
+          // Find status characteristic
+          for (var characteristic in service.characteristics) {
+            final charUuid = characteristic.uuid.toString().toLowerCase();
+            final targetCharUuid = BleProtocol.statusCharUuid.toLowerCase();
+            final shortTargetCharUuid = targetCharUuid.substring(4, 8);
+            
+            if (charUuid == targetCharUuid || charUuid == shortTargetCharUuid) {
+              developer.log('Found status characteristic!', name: 'BLE-Status');
+              
+              // Check if it supports notifications
+              if (characteristic.properties.notify) {
+                // Subscribe to notifications
+                await characteristic.setNotifyValue(true);
+                
+                // Cancel any existing subscription
+                await _statusSubscription?.cancel();
+                
+                // Listen for status updates
+                _statusSubscription = characteristic.onValueReceived.listen((value) {
+                  final jsonString = String.fromCharCodes(value);
+                  developer.log('Status update received: $jsonString', name: 'BLE-Status');
+                  
+                  try {
+                    // Parse JSON manually
+                    final statusData = _parseStatusJson(jsonString);
+                    _deviceStatusController.add(statusData);
+                    developer.log('Status parsed: $statusData', name: 'BLE-Status');
+                  } catch (e) {
+                    developer.log('Error parsing status: $e', name: 'BLE-Status');
+                  }
+                });
+                
+                developer.log('Subscribed to status notifications', name: 'BLE-Status');
+                
+                // Also read the current value
+                await readDeviceStatus();
+                
+                return true;
+              } else {
+                developer.log('Status characteristic does not support notifications', name: 'BLE-Status');
+                // Fall back to periodic reading
+                return false;
+              }
+            }
+          }
+          developer.log('Status characteristic not found in service', name: 'BLE-Status');
+        }
+      }
+      
+      developer.log('Bike tracker service not found for status', name: 'BLE-Status');
+      return false;
+    } catch (e) {
+      developer.log('Error subscribing to status: $e', name: 'BLE-Status', error: e);
+      return false;
+    }
+  }
+  
+  Future<Map<String, dynamic>?> readDeviceStatus() async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-Status');
+        return null;
+      }
+      
+      developer.log('Reading device status...', name: 'BLE-Status');
+      
+      // Discover services if not already done
+      final services = await _connectedDevice!.discoverServices();
+      
+      // Find our service and status characteristic
+      for (var service in services) {
+        final serviceUuid = service.uuid.toString().toLowerCase();
+        final targetUuid = BleProtocol.serviceUuid.toLowerCase();
+        final shortTargetUuid = targetUuid.substring(4, 8);
+        
+        if (serviceUuid == targetUuid || serviceUuid == shortTargetUuid) {
+          for (var characteristic in service.characteristics) {
+            final charUuid = characteristic.uuid.toString().toLowerCase();
+            final targetCharUuid = BleProtocol.statusCharUuid.toLowerCase();
+            final shortTargetCharUuid = targetCharUuid.substring(4, 8);
+            
+            if (charUuid == targetCharUuid || charUuid == shortTargetCharUuid) {
+              // Read the characteristic value
+              final value = await characteristic.read();
+              final jsonString = String.fromCharCodes(value);
+              developer.log('Status read: $jsonString', name: 'BLE-Status');
+              
+              // Parse and return the status
+              final statusData = _parseStatusJson(jsonString);
+              _deviceStatusController.add(statusData);
+              return statusData;
+            }
+          }
+        }
+      }
+      
+      developer.log('Status characteristic not found', name: 'BLE-Status');
+      return null;
+    } catch (e) {
+      developer.log('Error reading status: $e', name: 'BLE-Status', error: e);
+      return null;
+    }
+  }
+  
+  Map<String, dynamic> _parseStatusJson(String jsonString) {
+    // Manual JSON parsing for status data
+    Map<String, dynamic> result = {};
+    
+    // Extract ble_connected
+    if (jsonString.contains('"ble_connected":')) {
+      result['ble_connected'] = jsonString.contains('"ble_connected":true');
+    }
+    
+    // Extract phone_configured
+    if (jsonString.contains('"phone_configured":')) {
+      result['phone_configured'] = jsonString.contains('"phone_configured":true');
+    }
+    
+    // Extract phone number
+    final phoneMatch = RegExp(r'"phone":"([^"]*)"').firstMatch(jsonString);
+    if (phoneMatch != null) {
+      result['phone'] = phoneMatch.group(1) ?? '';
+    }
+    
+    // Extract interval
+    final intervalMatch = RegExp(r'"interval":(\d+)').firstMatch(jsonString);
+    if (intervalMatch != null) {
+      result['interval'] = int.tryParse(intervalMatch.group(1) ?? '0') ?? 0;
+    }
+    
+    // Extract alerts enabled
+    if (jsonString.contains('"alerts":')) {
+      result['alerts'] = jsonString.contains('"alerts":true');
+    }
+    
+    // Extract last config time
+    final configTimeMatch = RegExp(r'"last_config_time":(\d+)').firstMatch(jsonString);
+    if (configTimeMatch != null) {
+      result['last_config_time'] = int.tryParse(configTimeMatch.group(1) ?? '0') ?? 0;
+    }
+    
+    // For future: Add IR sensor status when MCU implements it
+    // Extract user_present (IR sensor)
+    if (jsonString.contains('"user_present":')) {
+      result['user_present'] = jsonString.contains('"user_present":true');
+    }
+    
+    // Extract motion_detected
+    if (jsonString.contains('"motion_detected":')) {
+      result['motion_detected'] = jsonString.contains('"motion_detected":true');
+    }
+    
+    // Extract device mode
+    final modeMatch = RegExp(r'"mode":"([^"]*)"').firstMatch(jsonString);
+    if (modeMatch != null) {
+      result['mode'] = modeMatch.group(1) ?? 'UNKNOWN';
+    }
+    
+    return result;
+  }
+  
   Future<void> disconnect() async {
     _reconnectionTimer?.cancel();
     _isReconnecting = false;
     _lastConnectedDeviceId = null;
     
     await _connectionSubscription?.cancel();
+    await _statusSubscription?.cancel();  // Cancel status subscription
     
     if (_connectedDevice != null) {
       await _connectedDevice!.disconnect();

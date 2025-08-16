@@ -7,6 +7,7 @@ import '../services/location_service.dart';
 import '../models/bike_device.dart';
 import '../models/location_data.dart';
 import '../widgets/location_map.dart';
+import '../widgets/device_status_card.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -461,6 +462,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
           ] else ...[
+            // Device status card when connected
+            const DeviceStatusCard(),
             // Location tracking section when connected
             Expanded(
               child: Column(
