@@ -462,12 +462,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
           ] else ...[
-            // Device status card when connected
-            const DeviceStatusCard(),
-            // Location tracking section when connected
+            // Scrollable content when connected
             Expanded(
-              child: Column(
-                children: [
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Device status card
+                    const DeviceStatusCard(),
                   // Location tracking status with tabs - reduced padding
                   Card(
                     margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -521,8 +522,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       ],
                     ),
                   ),
-                  // Tab view for map and list
-                  Expanded(
+                  // Tab view for map and list - fixed height
+                  SizedBox(
+                    height: 500, // Fixed height for map/list view
                     child: TabBarView(
                       controller: _tabController,
                       children: [
@@ -664,7 +666,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         label: const Text('Clear Location History'),
                       ),
                     ),
+                  const SizedBox(height: 20), // Add some bottom padding
                 ],
+                ),
               ),
             ),
           ],
