@@ -27,6 +27,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Use predefined interval options from constants
   final List<int> _intervalOptions = AppConstants.smsIntervalPresets;
   
+  // Country codes with abbreviations
+  String _selectedCountryCode = '+1';
+  final List<Map<String, String>> _countryCodes = [
+    {'code': '+1', 'country': 'US/CA'},
+    {'code': '+44', 'country': 'UK'},
+    {'code': '+91', 'country': 'IN'},
+    {'code': '+86', 'country': 'CN'},
+    {'code': '+81', 'country': 'JP'},
+    {'code': '+82', 'country': 'KR'},
+    {'code': '+49', 'country': 'DE'},
+    {'code': '+33', 'country': 'FR'},
+    {'code': '+39', 'country': 'IT'},
+    {'code': '+34', 'country': 'ES'},
+    {'code': '+61', 'country': 'AU'},
+    {'code': '+55', 'country': 'BR'},
+    {'code': '+52', 'country': 'MX'},
+    {'code': '+7', 'country': 'RU'},
+    {'code': '+31', 'country': 'NL'},
+    {'code': '+46', 'country': 'SE'},
+    {'code': '+47', 'country': 'NO'},
+    {'code': '+45', 'country': 'DK'},
+    {'code': '+358', 'country': 'FI'},
+    {'code': '+48', 'country': 'PL'},
+    {'code': '+90', 'country': 'TR'},
+    {'code': '+971', 'country': 'AE'},
+    {'code': '+966', 'country': 'SA'},
+    {'code': '+65', 'country': 'SG'},
+    {'code': '+60', 'country': 'MY'},
+    {'code': '+62', 'country': 'ID'},
+    {'code': '+63', 'country': 'PH'},
+    {'code': '+66', 'country': 'TH'},
+    {'code': '+84', 'country': 'VN'},
+    {'code': '+27', 'country': 'ZA'},
+    {'code': '+234', 'country': 'NG'},
+    {'code': '+254', 'country': 'KE'},
+    {'code': '+20', 'country': 'EG'},
+    {'code': '+212', 'country': 'MA'},
+  ];
+  
+  // Phone number history
+  List<String> _phoneNumberHistory = [];
+  
   @override
   void initState() {
     super.initState();
@@ -37,8 +79,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       
+      // Load saved phone number
+      final savedPhone = prefs.getString(AppConstants.keyConfigPhone) ?? '';
+      
+      // Extract country code if present
+      if (savedPhone.isNotEmpty) {
+        // Try to match country code
+        for (var country in _countryCodes) {
+          if (savedPhone.startsWith(country['code']!)) {
+            _selectedCountryCode = country['code']!;
+            // Remove country code from phone number
+            _phoneController.text = savedPhone.substring(country['code']!.length).trim();
+            break;
+          }
+        }
+        // If no country code matched, assume the whole thing is the number
+        if (_phoneController.text.isEmpty) {
+          _phoneController.text = savedPhone;
+        }
+      }
+      
+      // Load phone number history
+      _phoneNumberHistory = prefs.getStringList('phone_number_history') ?? [];
+      
       setState(() {
-        _phoneController.text = prefs.getString(AppConstants.keyConfigPhone) ?? '';
         _intervalController.text = (prefs.getInt(AppConstants.keyConfigInterval) ?? AppConstants.defaultSmsInterval).toString();
         _alertsEnabled = prefs.getBool(AppConstants.keyConfigAlerts) ?? true;
         _isLoading = false;
@@ -61,7 +125,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     
     try {
-      final phoneNumber = _phoneController.text.trim();
+      // Combine country code with phone number
+      final phoneNumber = _selectedCountryCode + _phoneController.text.trim();
       final updateInterval = int.tryParse(_intervalController.text) ?? 300;
       
       // Save to SharedPreferences
@@ -69,6 +134,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await prefs.setString(AppConstants.keyConfigPhone, phoneNumber);
       await prefs.setInt(AppConstants.keyConfigInterval, updateInterval);
       await prefs.setBool(AppConstants.keyConfigAlerts, _alertsEnabled);
+      
+      // Update phone number history
+      if (phoneNumber.isNotEmpty && !_phoneNumberHistory.contains(phoneNumber)) {
+        _phoneNumberHistory.insert(0, phoneNumber);
+        // Keep only last 5 phone numbers
+        if (_phoneNumberHistory.length > 5) {
+          _phoneNumberHistory = _phoneNumberHistory.sublist(0, 5);
+        }
+        await prefs.setStringList('phone_number_history', _phoneNumberHistory);
+      }
       
       developer.log('Settings saved to preferences', name: 'Settings');
       
@@ -153,6 +228,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await prefs.remove(AppConstants.keyConfigInterval);
       await prefs.remove(AppConstants.keyConfigAlerts);
       
+      // Optionally clear phone history
+      if (!mounted) return;
+      
+      final clearHistory = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clear Phone History?'),
+          content: const Text('Do you also want to clear saved phone numbers history?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep History'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
+              child: const Text('Clear History'),
+            ),
+          ],
+        ),
+      );
+      
+      if (clearHistory == true) {
+        await prefs.remove('phone_number_history');
+        _phoneNumberHistory.clear();
+      }
+      
       developer.log('Configuration cleared from preferences', name: 'Settings');
       
       // Clear from ESP32 if connected
@@ -163,6 +267,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _phoneController.clear();
         _intervalController.text = AppConstants.defaultSmsInterval.toString();
         _alertsEnabled = false;
+        _selectedCountryCode = '+1';
         _isSaving = false;
       });
       
@@ -201,6 +306,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final hours = seconds ~/ 3600;
       return '$hours hour${hours > 1 ? 's' : ''}';
     }
+  }
+  
+  void _selectPhoneFromHistory(String phoneNumber) {
+    // Extract country code if present
+    for (var country in _countryCodes) {
+      if (phoneNumber.startsWith(country['code']!)) {
+        setState(() {
+          _selectedCountryCode = country['code']!;
+          _phoneController.text = phoneNumber.substring(country['code']!.length).trim();
+        });
+        return;
+      }
+    }
+    // If no country code matched, set the whole number
+    setState(() {
+      _phoneController.text = phoneNumber;
+    });
   }
   
   @override
@@ -251,34 +373,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 20),
                       
-                      // Phone Number Field
-                      TextFormField(
-                        controller: _phoneController,
-                        decoration: InputDecoration(
-                          labelText: 'Phone Number',
-                          hintText: '+1234567890',
-                          prefixIcon: const Icon(Icons.phone),
-                          border: const OutlineInputBorder(),
-                          helperText: 'Include country code (e.g., +1 for USA)',
-                        ),
-                        keyboardType: TextInputType.phone,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[\d+\-\s()]')),
-                          LengthLimitingTextInputFormatter(20),
+                      // Phone Number Field with Country Code
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Country Code Dropdown
+                          SizedBox(
+                            width: 130,
+                            child: DropdownButtonFormField<String>(
+                              value: _selectedCountryCode,
+                              decoration: const InputDecoration(
+                                labelText: 'Country',
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 15),
+                              ),
+                              items: _countryCodes.map((country) {
+                                return DropdownMenuItem<String>(
+                                  value: country['code'],
+                                  child: Text(
+                                    '${country['code']} (${country['country']})',
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _selectedCountryCode = value!;
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Phone Number Input
+                          Expanded(
+                            child: TextFormField(
+                              controller: _phoneController,
+                              decoration: InputDecoration(
+                                labelText: 'Phone Number',
+                                hintText: '1234567890',
+                                prefixIcon: const Icon(Icons.phone),
+                                border: const OutlineInputBorder(),
+                                helperText: 'Enter number without country code',
+                                suffixIcon: _phoneNumberHistory.isNotEmpty
+                                  ? PopupMenuButton<String>(
+                                      icon: const Icon(Icons.history),
+                                      tooltip: 'Previous numbers',
+                                      onSelected: _selectPhoneFromHistory,
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          enabled: false,
+                                          child: Text(
+                                            'Previous Numbers',
+                                            style: TextStyle(fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        const PopupMenuDivider(),
+                                        ..._phoneNumberHistory.map((phone) {
+                                          return PopupMenuItem(
+                                            value: phone,
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.phone, size: 16),
+                                                const SizedBox(width: 8),
+                                                Text(phone),
+                                              ],
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                    )
+                                  : null,
+                              ),
+                              keyboardType: TextInputType.phone,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(15),
+                              ],
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter a phone number';
+                                }
+                                if (value.length < 7) {
+                                  return 'Phone number too short';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
                         ],
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter a phone number';
-                          }
-                          if (!value.startsWith('+')) {
-                            return 'Please include country code (e.g., +1)';
-                          }
-                          if (value.length < 10) {
-                            return 'Phone number too short';
-                          }
-                          return null;
-                        },
                       ),
+                      
+                      // Display complete phone number
+                      if (_phoneController.text.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: theme.colorScheme.secondary.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                size: 16,
+                                color: theme.colorScheme.secondary,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Full number: $_selectedCountryCode${_phoneController.text}',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSecondaryContainer,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       
                       const SizedBox(height: 20),
                       
