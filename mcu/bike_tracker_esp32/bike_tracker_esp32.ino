@@ -47,6 +47,7 @@ GPSData currentGPS;
 
 // Forward declarations
 void saveConfiguration();
+void clearConfiguration();
 void updateStatusCharacteristic();
 void testGPSAndSMS();
 void syncGPSHistory();
@@ -82,6 +83,13 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
       String value = pCharacteristic->getValue();
       
       if (value.length() > 0) {
+        // Check for clear command
+        if (value == "CLEAR" || value == "clear" || value == "{\"clear\":true}") {
+          clearConfiguration();
+          updateStatusCharacteristic();
+          return;
+        }
+        
         // Parse JSON manually
         String jsonStr = value;
         bool configChanged = false;
@@ -94,9 +102,16 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
         if (phoneStart >= 0) {
           phoneStart += isCompact ? 5 : 16;  // Length of key + quotes
           int phoneEnd = jsonStr.indexOf("\"", phoneStart);
-          if (phoneEnd > phoneStart) {
+          if (phoneEnd >= phoneStart) {  // Changed from > to >= to handle empty string
             String phone = jsonStr.substring(phoneStart, phoneEnd);
-            if (phone.length() > 0 && phone.length() < sizeof(config.phoneNumber)) {
+            
+            // Check if phone number is empty (clear command from app)
+            if (phone.length() == 0) {
+              // Clear configuration when empty phone number is received
+              clearConfiguration();
+              updateStatusCharacteristic();
+              return;
+            } else if (phone.length() < sizeof(config.phoneNumber)) {
               strncpy(config.phoneNumber, phone.c_str(), sizeof(config.phoneNumber) - 1);
               config.phoneNumber[sizeof(config.phoneNumber) - 1] = '\0';
               configChanged = true;
@@ -160,6 +175,23 @@ void saveConfiguration() {
   preferences.putUShort("interval", config.updateInterval);
   preferences.putBool("alerts", config.alertEnabled);
   preferences.end();
+}
+
+void clearConfiguration() {
+  // Clear config structure
+  memset(config.phoneNumber, 0, sizeof(config.phoneNumber));
+  config.updateInterval = 300;  // Reset to default 5 minutes
+  config.alertEnabled = true;   // Reset to default enabled
+  
+  // Clear from persistent storage
+  preferences.begin("bike-tracker", false);
+  preferences.clear();
+  preferences.end();
+  
+  Serial.println("✅ Configuration cleared");
+  Serial.println("  Phone: (empty)");
+  Serial.println("  Interval: 300 seconds");
+  Serial.println("  Alerts: Enabled");
 }
 
 // ============================================================================
@@ -464,6 +496,10 @@ void loop() {
       // Clear GPS history
       clearGPSHistory();
       Serial.println("✅ GPS history cleared");
+    } else if (command == "clearconfig") {
+      // Clear configuration
+      clearConfiguration();
+      updateStatusCharacteristic();
     } else if (command == "sync") {
       // Force sync GPS history
       if (deviceConnected) {
@@ -473,14 +509,15 @@ void loop() {
       }
     } else if (command == "help") {
       Serial.println("\n📚 Available Commands:");
-      Serial.println("  test     - Test GPS acquisition and SMS sending");
-      Serial.println("  gps      - Test GPS acquisition only");
-      Serial.println("  sms      - Send test SMS");
-      Serial.println("  status   - Show current status");
-      Serial.println("  history  - Show GPS history");
-      Serial.println("  clear    - Clear GPS history");
-      Serial.println("  sync     - Sync GPS history to app");
-      Serial.println("  help     - Show this help menu");
+      Serial.println("  test       - Test GPS acquisition and SMS sending");
+      Serial.println("  gps        - Test GPS acquisition only");
+      Serial.println("  sms        - Send test SMS");
+      Serial.println("  status     - Show current status");
+      Serial.println("  history    - Show GPS history");
+      Serial.println("  clear      - Clear GPS history");
+      Serial.println("  clearconfig- Clear all configuration");
+      Serial.println("  sync       - Sync GPS history to app");
+      Serial.println("  help       - Show this help menu");
     } else {
       Serial.print("❓ Unknown command: ");
       Serial.println(command);
