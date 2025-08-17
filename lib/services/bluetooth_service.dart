@@ -296,6 +296,27 @@ class BikeBluetoothService {
     });
   }
   
+  Future<bool> clearConfiguration() async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-ClearConfig');
+        return false;
+      }
+      
+      developer.log('Clearing device configuration...', name: 'BLE-ClearConfig');
+      
+      // Send empty configuration to clear MCU settings
+      return await sendConfiguration(
+        phoneNumber: '',  // Empty phone number indicates clear
+        updateInterval: 300,  // Reset to default
+        alertEnabled: false,  // Disable alerts
+      );
+    } catch (e) {
+      developer.log('Error clearing configuration: $e', name: 'BLE-ClearConfig', error: e);
+      return false;
+    }
+  }
+  
   Future<bool> sendConfiguration({
     required String phoneNumber,
     required int updateInterval,

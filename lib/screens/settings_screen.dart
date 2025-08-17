@@ -104,6 +104,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
   
+  Future<void> _clearConfiguration() async {
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              Icons.warning,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(width: 12),
+            const Text('Clear Configuration'),
+          ],
+        ),
+        content: const Text(
+          'This will permanently delete all SMS alert settings from both '
+          'the app and the connected device.\n\n'
+          'Are you sure you want to continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm != true) return;
+    
+    setState(() {
+      _isSaving = true;
+    });
+    
+    try {
+      // Clear from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(AppConstants.keyConfigPhone);
+      await prefs.remove(AppConstants.keyConfigInterval);
+      await prefs.remove(AppConstants.keyConfigAlerts);
+      
+      developer.log('Configuration cleared from preferences', name: 'Settings');
+      
+      // Clear from ESP32 if connected
+      final success = await _bleService.clearConfiguration();
+      
+      // Reset UI fields
+      setState(() {
+        _phoneController.clear();
+        _intervalController.text = AppConstants.defaultSmsInterval.toString();
+        _alertsEnabled = false;
+        _isSaving = false;
+      });
+      
+      if (!mounted) return;
+      
+      if (success) {
+        UIHelpers.showSuccess(context, 'Configuration cleared from device and app');
+      } else {
+        UIHelpers.showWarning(context, 'Configuration cleared from app. Connect to device to clear device settings.');
+      }
+    } catch (e) {
+      developer.log('Error clearing configuration: $e', name: 'Settings');
+      
+      setState(() {
+        _isSaving = false;
+      });
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+  
   String _formatInterval(int seconds) {
     if (seconds < 60) {
       return '$seconds seconds';
@@ -368,6 +455,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: Text(_isSaving ? 'Saving...' : 'Save Configuration'),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 12),
+              
+              // Clear Configuration Button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isSaving ? null : _clearConfiguration,
+                  icon: _isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.clear_all),
+                  label: Text(_isSaving ? 'Clearing...' : 'Clear Configuration'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    foregroundColor: theme.colorScheme.error,
+                    side: BorderSide(color: theme.colorScheme.error),
                   ),
                 ),
               ),
