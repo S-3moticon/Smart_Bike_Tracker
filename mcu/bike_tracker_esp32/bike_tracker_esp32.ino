@@ -221,12 +221,16 @@ void updateStatusCharacteristic() {
   readSensors();
   
   if (pStatusChar) {
+    // Check if phone is configured (not empty)
+    bool phoneConfigured = strlen(config.phoneNumber) > 0;
+    
     char jsonBuffer[300];
     snprintf(jsonBuffer, sizeof(jsonBuffer),
-             "{\"ble\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,"
+             "{\"ble\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,"
              "\"user\":%s,\"mode\":\"%s\","
              "\"gps_valid\":%s,\"lat\":\"%s\",\"lon\":\"%s\"}",
              status.bleConnected ? "true" : "false",
+             phoneConfigured ? "true" : "false",
              config.phoneNumber,
              config.updateInterval,
              config.alertEnabled ? "true" : "false",
