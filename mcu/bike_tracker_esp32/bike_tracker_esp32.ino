@@ -6,6 +6,11 @@
 #include <Preferences.h>  // For persistent storage
 #include "ble_protocol.h"
 
+// GPS/SMS Module Libraries
+#include "sim7070g.h"
+#include "gps_handler.h"
+#include "sms_handler.h"
+
 // Pin Definitions
 #define IR_SENSOR_PIN 25   // HW-201 IR sensor input
 
@@ -13,6 +18,7 @@
 BLEServer* pServer = NULL;
 BLECharacteristic* pConfigChar = NULL;
 BLECharacteristic* pStatusChar = NULL;
+BLECharacteristic* pHistoryChar = NULL;
 
 // Connection State
 bool deviceConnected = false;
@@ -32,14 +38,18 @@ struct {
 struct {
   bool bleConnected;
   bool userPresent;         // IR sensor status
-  char lastConfig[100];     // Last received config for debugging
-  unsigned long configTime; // Time of last config update
   String deviceMode;        // Current device mode (READY, AWAY, DISCONNECTED)
+  unsigned long lastGPSTime; // Last GPS acquisition time
 } status;
+
+// GPS Data
+GPSData currentGPS;
 
 // Forward declarations
 void saveConfiguration();
 void updateStatusCharacteristic();
+void testGPSAndSMS();
+void syncGPSHistory();
 
 // ============================================================================
 // BLE Server Callbacks
@@ -49,6 +59,10 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = true;
       status.bleConnected = true;
       Serial.println("✅ BLE Client Connected");
+      
+      // Sync GPS history when device reconnects
+      delay(1000);  // Give BLE time to stabilize
+      syncGPSHistory();
     };
 
     void onDisconnect(BLEServer* pServer) {
@@ -67,101 +81,46 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
       // Get the value directly as Arduino String
       String value = pCharacteristic->getValue();
       
-      Serial.println("\n📥 Configuration Write Event Triggered!");
-      Serial.println("=====================================");
-      
       if (value.length() > 0) {
-        Serial.print("Raw data length: ");
-        Serial.println(value.length());
-        Serial.print("Raw data (hex): ");
-        for (size_t i = 0; i < value.length(); i++) {
-          Serial.printf("%02X ", (uint8_t)value[i]);
-        }
-        Serial.println();
-        Serial.print("Raw data (ASCII): ");
-        Serial.println(value);
-        Serial.print("First 10 chars: ");
-        Serial.println(value.substring(0, 10));
-        
-        // Store raw config for debugging
-        strncpy(status.lastConfig, value.c_str(), sizeof(status.lastConfig) - 1);
-        status.lastConfig[sizeof(status.lastConfig) - 1] = '\0';  // Ensure null termination
-        status.configTime = millis();
-        
         // Parse JSON manually
-        String jsonStr = value;  // Already an Arduino String
+        String jsonStr = value;
         bool configChanged = false;
-        
-        Serial.println("\n📋 Parsing Configuration:");
-        Serial.println("-------------------");
         
         // Check if compact format (has "p" key instead of "phone_number")
         bool isCompact = jsonStr.indexOf("\"p\":") >= 0;
-        Serial.print("Format: ");
-        Serial.println(isCompact ? "Compact" : "Full");
         
         // Extract phone number
         int phoneStart = isCompact ? jsonStr.indexOf("\"p\":\"") : jsonStr.indexOf("\"phone_number\":\"");
-        Serial.print("Looking for phone at index: ");
-        Serial.println(phoneStart);
         if (phoneStart >= 0) {
           phoneStart += isCompact ? 5 : 16;  // Length of key + quotes
           int phoneEnd = jsonStr.indexOf("\"", phoneStart);
-          Serial.print("Phone substring from ");
-          Serial.print(phoneStart);
-          Serial.print(" to ");
-          Serial.println(phoneEnd);
           if (phoneEnd > phoneStart) {
             String phone = jsonStr.substring(phoneStart, phoneEnd);
-            Serial.print("Extracted phone: ");
-            Serial.println(phone);
             if (phone.length() > 0 && phone.length() < sizeof(config.phoneNumber)) {
               strncpy(config.phoneNumber, phone.c_str(), sizeof(config.phoneNumber) - 1);
               config.phoneNumber[sizeof(config.phoneNumber) - 1] = '\0';
               configChanged = true;
-              Serial.print("✅ Phone Number Set: ");
-              Serial.println(config.phoneNumber);
             }
           }
-        } else {
-          Serial.println("❌ phone_number field not found in JSON");
         }
         
         // Extract update interval
         int intervalStart = isCompact ? jsonStr.indexOf("\"i\":") : jsonStr.indexOf("\"update_interval\":");
-        Serial.print("Looking for interval at index: ");
-        Serial.println(intervalStart);
         if (intervalStart >= 0) {
           intervalStart += isCompact ? 4 : 18;  // Length of key + colon
           int intervalEnd = jsonStr.indexOf(",", intervalStart);
           if (intervalEnd < 0) {
             intervalEnd = jsonStr.indexOf("}", intervalStart);
           }
-          Serial.print("Interval substring from ");
-          Serial.print(intervalStart);
-          Serial.print(" to ");
-          Serial.println(intervalEnd);
           if (intervalEnd > intervalStart) {
             String interval = jsonStr.substring(intervalStart, intervalEnd);
             interval.trim();
-            Serial.print("Extracted interval string: '");
-            Serial.print(interval);
-            Serial.println("'");
             int newInterval = interval.toInt();
-            Serial.print("Parsed interval value: ");
-            Serial.println(newInterval);
             if (newInterval >= 10 && newInterval <= 3600) {  // Valid range: 10s to 1 hour
               config.updateInterval = newInterval;
               configChanged = true;
-              Serial.print("✅ Update Interval Set: ");
-              Serial.print(config.updateInterval);
-              Serial.println(" seconds");
-            } else {
-              Serial.println("❌ Interval out of range (10-3600)");
             }
           }
-        } else {
-          Serial.println("❌ update_interval field not found in JSON");
         }
         
         // Extract alert enabled flag
@@ -169,28 +128,17 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
         if (alertStart >= 0) {
           alertStart += isCompact ? 4 : 16;  // Length of key + colon
           String alertSection = jsonStr.substring(alertStart, alertStart + 10);
-          // In compact format: "1" = true, "0" = false
-          // In full format: "true" or "false"
           config.alertEnabled = isCompact ? 
             (alertSection.indexOf("1") >= 0) : 
             (alertSection.indexOf("true") >= 0);
           configChanged = true;
-          Serial.print("🚨 Alerts Enabled: ");
-          Serial.println(config.alertEnabled ? "Yes" : "No");
         }
         
-        // Save configuration to persistent storage if changed
+        // Save configuration if changed
         if (configChanged) {
           saveConfiguration();
-          Serial.println("💾 Configuration saved to flash memory");
+          updateStatusCharacteristic();
         }
-        
-        Serial.println("=====================================\n");
-        
-        // Update status characteristic
-        updateStatusCharacteristic();
-      } else {
-        Serial.println("❌ No data received (empty value)");
       }
     }
 };
@@ -200,31 +148,17 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
 // ============================================================================
 void loadConfiguration() {
   preferences.begin("bike-tracker", false);
-  
-  // Load saved configuration or use defaults
   preferences.getString("phone", config.phoneNumber, sizeof(config.phoneNumber));
   config.updateInterval = preferences.getUShort("interval", 300);  // Default 5 minutes
   config.alertEnabled = preferences.getBool("alerts", true);       // Default enabled
-  
   preferences.end();
-  
-  Serial.println("📂 Configuration loaded from storage:");
-  Serial.print("  Phone: ");
-  Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
-  Serial.print("  Interval: ");
-  Serial.print(config.updateInterval);
-  Serial.println(" seconds");
-  Serial.print("  Alerts: ");
-  Serial.println(config.alertEnabled ? "Enabled" : "Disabled");
 }
 
 void saveConfiguration() {
   preferences.begin("bike-tracker", false);
-  
   preferences.putString("phone", config.phoneNumber);
   preferences.putUShort("interval", config.updateInterval);
   preferences.putBool("alerts", config.alertEnabled);
-  
   preferences.end();
 }
 
@@ -255,30 +189,64 @@ void updateStatusCharacteristic() {
   readSensors();
   
   if (pStatusChar) {
-    char jsonBuffer[350];
+    char jsonBuffer[300];
     snprintf(jsonBuffer, sizeof(jsonBuffer),
-             "{\"ble_connected\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,"
-             "\"user_present\":%s,\"mode\":\"%s\",\"last_config_time\":%lu}",
+             "{\"ble\":%s,\"phone\":\"%s\",\"interval\":%d,\"alerts\":%s,"
+             "\"user\":%s,\"mode\":\"%s\","
+             "\"gps_valid\":%s,\"lat\":\"%s\",\"lon\":\"%s\"}",
              status.bleConnected ? "true" : "false",
-             strlen(config.phoneNumber) > 0 ? "true" : "false",
              config.phoneNumber,
              config.updateInterval,
              config.alertEnabled ? "true" : "false",
              status.userPresent ? "true" : "false",
              status.deviceMode.c_str(),
-             status.configTime);
+             currentGPS.valid ? "true" : "false",
+             currentGPS.valid ? currentGPS.latitude.c_str() : "",
+             currentGPS.valid ? currentGPS.longitude.c_str() : "");
     
     pStatusChar->setValue(jsonBuffer);
     
     if (deviceConnected) {
       pStatusChar->notify();
-      Serial.println("📤 Status update sent to app");
-      
-      // Debug output
-      Serial.print("  👤 User: ");
-      Serial.print(status.userPresent ? "Present" : "Away");
-      Serial.print(" | Mode: ");
-      Serial.println(status.deviceMode);
+    }
+  }
+}
+
+// ============================================================================
+// GPS and SMS Test Functions
+// ============================================================================
+void testGPSAndSMS() {
+  if (strlen(config.phoneNumber) == 0) {
+    Serial.println("❌ No phone number configured");
+    return;
+  }
+  
+  Serial.println("\n🛰️ Acquiring GPS...");
+  bool gotFix = acquireGPSFix(currentGPS, 20);
+  
+  if (gotFix) {
+    Serial.print("✅ GPS: ");
+    Serial.print(currentGPS.latitude);
+    Serial.print(", ");
+    Serial.println(currentGPS.longitude);
+    
+    saveGPSData(currentGPS);
+    status.lastGPSTime = millis();
+    logGPSPoint(currentGPS, 1);  // Source: 1 = SIM7070G
+    
+    if (sendLocationSMS(config.phoneNumber, currentGPS, ALERT_TEST)) {
+      Serial.println("✅ SMS sent");
+    } else {
+      Serial.println("❌ SMS failed");
+    }
+  } else {
+    // Try last known location
+    if (loadGPSData(currentGPS)) {
+      Serial.println("📍 Using last known location");
+      sendLocationSMS(config.phoneNumber, currentGPS, ALERT_TEST);
+    } else {
+      // Send simple test SMS
+      sendTestSMS(config.phoneNumber);
     }
   }
 }
@@ -293,36 +261,25 @@ void initBLE() {
           (uint8_t)(ESP.getEfuseMac() >> 8), 
           (uint8_t)(ESP.getEfuseMac()));
   
-  Serial.print("🔷 Initializing BLE as: ");
+  Serial.print("🔷 BLE Device: ");
   Serial.println(deviceName);
   
-  // Initialize BLE
   BLEDevice::init(deviceName);
+  BLEDevice::setMTU(185);  // For JSON config
   
-  // Set MTU to larger value to handle JSON config (default is 23, we need at least 100)
-  BLEDevice::setMTU(185);  // This allows up to 182 bytes of data
-  Serial.println("📏 MTU set to 185 bytes");
-  
-  // Create BLE server
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   
-  // Create BLE service
-  Serial.print("🔵 Creating BLE service with UUID: ");
-  Serial.println(SERVICE_UUID);
   BLEService *pService = pServer->createService(SERVICE_UUID);
   
-  // Create Config characteristic (WRITE)
-  Serial.print("Creating Config characteristic with UUID: ");
-  Serial.println(CONFIG_CHAR_UUID);
+  // Config characteristic (WRITE)
   pConfigChar = pService->createCharacteristic(
                     CONFIG_CHAR_UUID,
                     BLECharacteristic::PROPERTY_WRITE
                   );
   pConfigChar->setCallbacks(new ConfigCharCallbacks());
-  Serial.println("✅ Config characteristic created with WRITE property");
   
-  // Create Status characteristic (READ, NOTIFY)
+  // Status characteristic (READ, NOTIFY)
   pStatusChar = pService->createCharacteristic(
                     STATUS_CHAR_UUID,
                     BLECharacteristic::PROPERTY_READ |
@@ -330,18 +287,46 @@ void initBLE() {
                   );
   pStatusChar->addDescriptor(new BLE2902());
   
+  // History characteristic (READ, NOTIFY)
+  pHistoryChar = pService->createCharacteristic(
+                    HISTORY_CHAR_UUID,
+                    BLECharacteristic::PROPERTY_READ |
+                    BLECharacteristic::PROPERTY_NOTIFY
+                  );
+  pHistoryChar->addDescriptor(new BLE2902());
+  
   // Start service
   pService->start();
   
-  // Configure advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);  // 7.5ms
-  pAdvertising->setMinPreferred(0x12);  // 15ms
+  pAdvertising->setMinPreferred(0x06);
   BLEDevice::startAdvertising();
   
-  Serial.println("✅ BLE Service started and advertising");
+  Serial.println("✅ BLE Service started");
+}
+
+// ============================================================================
+// GPS History Sync
+// ============================================================================
+void syncGPSHistory() {
+  if (!deviceConnected || !pHistoryChar) {
+    return;
+  }
+  
+  Serial.println("📤 Syncing GPS history to app...");
+  
+  // Get GPS history as JSON
+  String historyJson = getGPSHistoryJSON(20);  // Send last 20 points
+  
+  // Send via BLE
+  pHistoryChar->setValue(historyJson.c_str());
+  pHistoryChar->notify();
+  
+  Serial.print("   Sent ");
+  Serial.print(getGPSHistoryCount());
+  Serial.println(" GPS points to app");
 }
 
 // ============================================================================
@@ -349,28 +334,33 @@ void initBLE() {
 // ============================================================================
 void setup() {
   Serial.begin(115200);
-  delay(1000);  // Give serial time to initialize
+  delay(1000);
   
-  Serial.println("\n\n========================================");
-  Serial.println("🚴 Smart Bike Tracker - BLE Config Test");
-  Serial.println("========================================\n");
+  Serial.println("\n🚴 Smart Bike Tracker v1.0");
+  Serial.println("==============================\n");
   
-  // Configure IR sensor pin
+  // Initialize hardware
   pinMode(IR_SENSOR_PIN, INPUT);
-  Serial.println("🔦 IR sensor configured on pin 25");
-  
-  // Initialize status
   status.bleConnected = false;
   status.userPresent = false;
   status.deviceMode = "DISCONNECTED";
-  status.configTime = 0;
-  memset(status.lastConfig, 0, sizeof(status.lastConfig));
+  status.lastGPSTime = 0;
   
-  // Load saved configuration
+  // Load configuration and initialize services
   loadConfiguration();
-  
-  // Initialize BLE
   initBLE();
+  initGPSHistory();
+  
+  // Initialize SIM7070G
+  if (initializeSIM7070G()) {
+    if (checkNetworkRegistration()) {
+      Serial.println("✅ Ready (Network OK)");
+    } else {
+      Serial.println("⚠️ Ready (No network)");
+    }
+  } else {
+    Serial.println("⚠️ SIM7070G not available");
+  }
   
   Serial.println("\n📡 Ready for BLE connections...\n");
 }
@@ -381,41 +371,127 @@ void setup() {
 void loop() {
   static unsigned long lastStatusUpdate = 0;
   
-  // Handle disconnection
+  // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
     delay(500);
     pServer->startAdvertising();
-    Serial.println("🔄 Restarting advertising...");
     oldDeviceConnected = deviceConnected;
   }
   
-  // Handle new connection
   if (deviceConnected && !oldDeviceConnected) {
     oldDeviceConnected = deviceConnected;
-    Serial.println("🔗 Connection established");
-    // Send initial status
     updateStatusCharacteristic();
+  }
+  
+  // Read sensors
+  readSensors();
+  
+  // Check for serial commands
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    
+    if (command == "test") {
+      // Run GPS and SMS test
+      testGPSAndSMS();
+    } else if (command == "gps") {
+      Serial.println("\n🛰️ Testing GPS...");
+      if (acquireGPSFix(currentGPS, 20)) {
+        Serial.print("✅ GPS: ");
+        Serial.print(currentGPS.latitude);
+        Serial.print(", ");
+        Serial.println(currentGPS.longitude);
+        saveGPSData(currentGPS);
+        logGPSPoint(currentGPS, 1);
+      } else {
+        Serial.println("❌ GPS failed");
+      }
+    } else if (command == "sms") {
+      // Send test SMS
+      if (strlen(config.phoneNumber) > 0) {
+        Serial.println("\n📱 Sending test SMS...");
+        if (currentGPS.valid) {
+          if (sendLocationSMS(config.phoneNumber, currentGPS, ALERT_TEST)) {
+            Serial.println("✅ SMS sent with location!");
+          } else {
+            Serial.println("❌ Failed to send SMS");
+          }
+        } else {
+          if (sendTestSMS(config.phoneNumber)) {
+            Serial.println("✅ Simple test SMS sent!");
+          } else {
+            Serial.println("❌ Failed to send SMS");
+          }
+        }
+      } else {
+        Serial.println("❌ No phone number configured");
+      }
+    } else if (command == "status") {
+      // Print current status
+      Serial.println("\n📊 Current Status:");
+      Serial.print("  👤 IR Sensor: User ");
+      Serial.println(status.userPresent ? "Present" : "Away");
+      Serial.print("  📍 Mode: ");
+      Serial.println(status.deviceMode);
+      Serial.print("  🔗 BLE: ");
+      Serial.println(deviceConnected ? "Connected" : "Disconnected");
+      Serial.print("  📞 Phone: ");
+      Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
+      Serial.print("  ⏱️ Interval: ");
+      Serial.print(config.updateInterval);
+      Serial.println(" seconds");
+      Serial.print("  🚨 Alerts: ");
+      Serial.println(config.alertEnabled ? "Enabled" : "Disabled");
+      if (currentGPS.valid) {
+        Serial.print("  🛰️ GPS: ");
+        Serial.print(currentGPS.latitude);
+        Serial.print(", ");
+        Serial.println(currentGPS.longitude);
+      } else {
+        Serial.println("  🛰️ GPS: No valid fix");
+      }
+    } else if (command == "history") {
+      // Show GPS history
+      Serial.println("\n📍 GPS History:");
+      int count = getGPSHistoryCount();
+      Serial.print("  Total points: ");
+      Serial.println(count);
+      if (count > 0) {
+        Serial.println("  Last 5 points:");
+        Serial.println(getGPSHistoryJSON(5));
+      }
+    } else if (command == "clear") {
+      // Clear GPS history
+      clearGPSHistory();
+      Serial.println("✅ GPS history cleared");
+    } else if (command == "sync") {
+      // Force sync GPS history
+      if (deviceConnected) {
+        syncGPSHistory();
+      } else {
+        Serial.println("❌ No BLE device connected");
+      }
+    } else if (command == "help") {
+      Serial.println("\n📚 Available Commands:");
+      Serial.println("  test     - Test GPS acquisition and SMS sending");
+      Serial.println("  gps      - Test GPS acquisition only");
+      Serial.println("  sms      - Send test SMS");
+      Serial.println("  status   - Show current status");
+      Serial.println("  history  - Show GPS history");
+      Serial.println("  clear    - Clear GPS history");
+      Serial.println("  sync     - Sync GPS history to app");
+      Serial.println("  help     - Show this help menu");
+    } else {
+      Serial.print("❓ Unknown command: ");
+      Serial.println(command);
+      Serial.println("Type 'help' for available commands");
+    }
   }
   
   // Periodic status update (every 10 seconds when connected)
   if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
     lastStatusUpdate = millis();
-    
-    // Read sensors and update status
-    readSensors();
     updateStatusCharacteristic();
-    
-    // Print current status
-    Serial.println("📊 Current Status:");
-    Serial.print("  👤 IR Sensor: User ");
-    Serial.println(status.userPresent ? "Present (READY)" : "Away");
-    Serial.print("  📍 Mode: ");
-    Serial.println(status.deviceMode);
-    Serial.print("  📞 Phone: ");
-    Serial.println(strlen(config.phoneNumber) > 0 ? config.phoneNumber : "(not set)");
-    Serial.print("  ⏱️ Interval: ");
-    Serial.print(config.updateInterval);
-    Serial.println(" seconds");
   }
   
   delay(10);
