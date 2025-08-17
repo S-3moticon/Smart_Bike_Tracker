@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:developer' as developer;
 import '../services/bluetooth_service.dart' as bike_ble;
+import '../utils/ui_helpers.dart';
+import '../constants/app_constants.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -22,8 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSaving = false;
   bool _isLoading = true;
   
-  // Predefined interval options
-  final List<int> _intervalOptions = [10, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  // Use predefined interval options from constants
+  final List<int> _intervalOptions = AppConstants.smsIntervalPresets;
   
   @override
   void initState() {
@@ -36,9 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final prefs = await SharedPreferences.getInstance();
       
       setState(() {
-        _phoneController.text = prefs.getString('config_phone') ?? '';
-        _intervalController.text = (prefs.getInt('config_interval') ?? 300).toString();
-        _alertsEnabled = prefs.getBool('config_alerts') ?? true;
+        _phoneController.text = prefs.getString(AppConstants.keyConfigPhone) ?? '';
+        _intervalController.text = (prefs.getInt(AppConstants.keyConfigInterval) ?? AppConstants.defaultSmsInterval).toString();
+        _alertsEnabled = prefs.getBool(AppConstants.keyConfigAlerts) ?? true;
         _isLoading = false;
       });
       
@@ -64,9 +66,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       // Save to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('config_phone', phoneNumber);
-      await prefs.setInt('config_interval', updateInterval);
-      await prefs.setBool('config_alerts', _alertsEnabled);
+      await prefs.setString(AppConstants.keyConfigPhone, phoneNumber);
+      await prefs.setInt(AppConstants.keyConfigInterval, updateInterval);
+      await prefs.setBool(AppConstants.keyConfigAlerts, _alertsEnabled);
       
       developer.log('Settings saved to preferences', name: 'Settings');
       
@@ -80,19 +82,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Configuration sent to device successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        UIHelpers.showSuccess(context, 'Configuration sent to device successfully');
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Settings saved locally. Connect to device to sync.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        UIHelpers.showWarning(context, 'Settings saved locally. Connect to device to sync.');
       }
     } catch (e) {
       developer.log('Error saving settings: $e', name: 'Settings');

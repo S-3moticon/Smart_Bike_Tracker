@@ -169,7 +169,7 @@ class _MapDownloadDialogState extends State<MapDownloadDialog> {
             // Current offline map info
             if (_offlineMapInfo != null && _offlineMapInfo!['exists']) ...[
               Card(
-                color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
@@ -208,7 +208,7 @@ class _MapDownloadDialogState extends State<MapDownloadDialog> {
             // Location status
             if (!hasLocation) ...[
               Card(
-                color: theme.colorScheme.errorContainer.withOpacity(0.3),
+                color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
@@ -232,7 +232,7 @@ class _MapDownloadDialogState extends State<MapDownloadDialog> {
               const SizedBox(height: 16),
             ] else ...[
               Card(
-                color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(

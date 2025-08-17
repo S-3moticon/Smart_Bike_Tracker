@@ -13,7 +13,8 @@ import '../models/location_data.dart';
 import '../widgets/location_map.dart';
 import '../widgets/device_status_card.dart';
 import '../widgets/map_download_dialog.dart';
-import '../widgets/custom_scroll_physics.dart';
+import '../utils/ui_helpers.dart';
+import '../constants/app_constants.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -244,9 +245,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _connectingDeviceId = null;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to connect')),
-      );
+      UIHelpers.showError(context, 'Failed to connect');
     }
   }
   
@@ -275,9 +274,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     if (confirm == true) {
       await _bleService.disconnect();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Disconnected from device')),
-        );
+        UIHelpers.showInfo(context, 'Disconnected from device');
       }
     }
   }
@@ -334,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         developer.log('Syncing saved configuration to device...', name: 'HomeScreen');
         
         // Wait a moment for the connection to stabilize
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(AppConstants.connectionStabilizationDelay);
         
         // Send configuration to device
         final success = await _bleService.sendConfiguration(
@@ -346,24 +343,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         if (success) {
           developer.log('Configuration synced successfully', name: 'HomeScreen');
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Configuration synced to device'),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 2),
-              ),
-            );
+            UIHelpers.showSuccess(context, 'Configuration synced to device');
           }
         } else {
           developer.log('Failed to sync configuration', name: 'HomeScreen');
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Failed to sync configuration'),
-                backgroundColor: Colors.orange,
-                duration: Duration(seconds: 2),
-              ),
-            );
+            UIHelpers.showWarning(context, 'Failed to sync configuration');
           }
         }
       } else {
@@ -817,7 +802,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               if (notification.overscroll > 0 && notification.metrics.pixels >= notification.metrics.maxScrollExtent) {
                                 // Find the parent ScrollController and scroll it
                                 final scrollController = PrimaryScrollController.of(context);
-                                if (scrollController != null && scrollController.hasClients) {
+                                if (scrollController.hasClients) {
                                   scrollController.animateTo(
                                     scrollController.offset + notification.overscroll,
                                     duration: const Duration(milliseconds: 100),
@@ -832,7 +817,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               thumbVisibility: true, // Always show scrollbar
                               thickness: 8.0,
                               radius: const Radius.circular(4),
-                              thumbColor: theme.colorScheme.primary.withOpacity(0.6),
+                              thumbColor: theme.colorScheme.primary.withValues(alpha: 0.6),
                               interactive: true, // Allow dragging the scrollbar
                               child: ListView.builder(
                                 physics: const BouncingScrollPhysics(), // Use bouncing for better feel

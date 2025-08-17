@@ -220,7 +220,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
+                  color: Colors.black.withValues(alpha: 0.3),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -249,10 +249,10 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
           height: 20,
           child: Container(
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.secondary.withOpacity(opacity),
+              color: Theme.of(context).colorScheme.secondary.withValues(alpha: opacity),
               shape: BoxShape.circle,
               border: Border.all(
-                color: Colors.white.withOpacity(opacity),
+                color: Colors.white.withValues(alpha: opacity),
                 width: 2,
               ),
             ),
@@ -337,7 +337,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 currentTileLayer['attribution']!,
                 style: const TextStyle(fontSize: 10),
               ),
-              backgroundColor: Colors.white.withOpacity(0.7),
+              backgroundColor: Colors.white.withValues(alpha: 0.7),
             ),
             
             // Polyline layer for location trail
@@ -346,11 +346,11 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 polylines: [
                   Polyline(
                     points: _buildPolylinePoints(),
-                    color: theme.colorScheme.primary.withOpacity(0.6),
+                    color: theme.colorScheme.primary.withValues(alpha: 0.6),
                     strokeWidth: 4,
                     gradientColors: [
                       theme.colorScheme.primary,
-                      theme.colorScheme.primary.withOpacity(0.3),
+                      theme.colorScheme.primary.withValues(alpha: 0.3),
                     ],
                   ),
                 ],
@@ -456,7 +456,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
+                    color: Colors.black.withValues(alpha: 0.2),
                     blurRadius: 4,
                     offset: const Offset(0, 2),
                   ),
@@ -493,11 +493,11 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surface.withOpacity(0.9),
+              color: theme.colorScheme.surface.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black.withValues(alpha: 0.1),
                   blurRadius: 4,
                   offset: const Offset(0, 2),
                 ),
@@ -521,11 +521,11 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
               constraints: const BoxConstraints(maxWidth: 200),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: theme.colorScheme.surface.withOpacity(0.95),
+                color: theme.colorScheme.surface.withValues(alpha: 0.95),
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 4,
                     offset: const Offset(0, 2),
                   ),

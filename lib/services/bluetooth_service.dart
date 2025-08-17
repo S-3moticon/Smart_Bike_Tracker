@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/bike_device.dart';
 import '../constants/ble_protocol.dart';
+import '../constants/app_constants.dart';
 
 class BikeBluetoothService {
   static final BikeBluetoothService _instance = BikeBluetoothService._internal();
@@ -37,9 +38,10 @@ class BikeBluetoothService {
   // Bluetooth adapter state monitoring
   StreamSubscription? _adapterStateSubscription;
   
-  static const String _prefKeyLastDevice = 'last_connected_device_id';
-  static const String _prefKeyLastDeviceName = 'last_connected_device_name';
-  static const String _prefKeyAutoConnect = 'auto_connect_enabled';
+  // Use storage keys from constants
+  static const String _prefKeyLastDevice = AppConstants.keyLastDevice;
+  static const String _prefKeyLastDeviceName = AppConstants.keyLastDeviceName;
+  static const String _prefKeyAutoConnect = AppConstants.keyAutoConnect;
   
   // Initialize Bluetooth state monitoring
   void initializeBluetoothMonitoring() {
@@ -109,7 +111,7 @@ class BikeBluetoothService {
     }
   }
   
-  Future<void> startScan({Duration timeout = const Duration(seconds: 10)}) async {
+  Future<void> startScan({Duration timeout = const Duration(seconds: AppConstants.bleScanTimeout)}) async {
     try {
       _discoveredDevices.clear();
       _scanResultsController.add([]);
@@ -202,7 +204,7 @@ class BikeBluetoothService {
       // Request larger MTU for config data (default is 23, we need at least 100)
       try {
         if (Platform.isAndroid) {
-          final mtu = await bikeDevice.device.requestMtu(185);
+          final mtu = await bikeDevice.device.requestMtu(AppConstants.bleMtuSize);
           developer.log('MTU negotiated: $mtu bytes', name: 'BLE');
         }
       } catch (e) {
@@ -258,7 +260,7 @@ class BikeBluetoothService {
   
   void _startReconnectionTimer() {
     _reconnectionTimer?.cancel();
-    _reconnectionTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+    _reconnectionTimer = Timer.periodic(const Duration(seconds: AppConstants.bleReconnectionInterval), (timer) async {
       if (!_isReconnecting) {
         timer.cancel();
         return;

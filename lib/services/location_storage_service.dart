@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:developer' as developer;
 import '../models/location_data.dart';
+import '../constants/app_constants.dart';
 
 class LocationStorageService {
-  static const String _historyKey = 'location_history';
-  static const int _maxHistorySize = 500; // Store up to 500 locations
+  static const String _historyKey = AppConstants.keyLocationHistory;
+  static const int _maxHistorySize = AppConstants.maxLocationHistory;
   
   Future<List<LocationData>> loadLocationHistory() async {
     try {
