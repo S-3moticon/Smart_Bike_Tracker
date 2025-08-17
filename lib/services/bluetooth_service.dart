@@ -564,9 +564,11 @@ class BikeBluetoothService {
     // Manual JSON parsing for status data
     Map<String, dynamic> result = {};
     
-    // Extract ble_connected
+    // Extract ble_connected (check both "ble_connected" and "ble" keys)
     if (jsonString.contains('"ble_connected":')) {
       result['ble_connected'] = jsonString.contains('"ble_connected":true');
+    } else if (jsonString.contains('"ble":')) {
+      result['ble_connected'] = jsonString.contains('"ble":true');
     }
     
     // Extract phone_configured
@@ -597,9 +599,11 @@ class BikeBluetoothService {
       result['last_config_time'] = int.tryParse(configTimeMatch.group(1) ?? '0') ?? 0;
     }
     
-    // Extract user_present (IR sensor)
+    // Extract user_present (IR sensor) - check both "user_present" and "user" keys
     if (jsonString.contains('"user_present":')) {
       result['user_present'] = jsonString.contains('"user_present":true');
+    } else if (jsonString.contains('"user":')) {
+      result['user_present'] = jsonString.contains('"user":true');
     }
     
     // Extract device mode (READY, AWAY, DISCONNECTED)
