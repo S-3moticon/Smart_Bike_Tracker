@@ -10,6 +10,14 @@ class AppConstants {
   static const int bleReconnectionInterval = 5; // seconds
   static const int bleMtuSize = 185; // bytes
   
+  // BLE UUIDs (from MCU ble_protocol.h)
+  static const String serviceUuid = '00001234-0000-1000-8000-00805f9b34fb';
+  static const String locationCharUuid = '00001235-0000-1000-8000-00805f9b34fb';
+  static const String configCharUuid = '00001236-0000-1000-8000-00805f9b34fb';
+  static const String statusCharUuid = '00001237-0000-1000-8000-00805f9b34fb';
+  static const String commandCharUuid = '00001238-0000-1000-8000-00805f9b34fb';
+  static const String historyCharUuid = '00001239-0000-1000-8000-00805f9b34fb';
+  
   // Location Related
   static const int maxLocationHistory = 500;
   static const int locationUpdateInterval = 5; // seconds

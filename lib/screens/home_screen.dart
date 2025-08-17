@@ -42,7 +42,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _isTrackingLocation = false;
   LocationData? _currentLocation;
   
-  // Tab controller for map/list view
+  // MCU GPS History
+  List<Map<String, dynamic>> _mcuGpsHistory = [];
+  bool _isLoadingMcuHistory = false;
+  
+  // Tab controller for map/list/mcu view
   late TabController _tabController;
   
   StreamSubscription? _connectionSubscription;
@@ -55,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
       setState(() {}); // Rebuild to show/hide clear button
     });
@@ -90,6 +94,39 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     developer.log('Loaded ${history.length} locations from storage', name: 'HomeScreen');
   }
   
+  Future<void> _fetchMcuGpsHistory() async {
+    if (_connectionState != BluetoothConnectionState.connected) {
+      return;
+    }
+    
+    setState(() {
+      _isLoadingMcuHistory = true;
+    });
+    
+    try {
+      final history = await _bleService.readGPSHistory();
+      if (mounted && history != null) {
+        setState(() {
+          _mcuGpsHistory = history;
+          _isLoadingMcuHistory = false;
+        });
+        developer.log('Fetched ${history.length} GPS points from MCU', name: 'HomeScreen');
+      } else {
+        setState(() {
+          _mcuGpsHistory = [];
+          _isLoadingMcuHistory = false;
+        });
+      }
+    } catch (e) {
+      developer.log('Error fetching MCU GPS history: $e', name: 'HomeScreen');
+      if (mounted) {
+        setState(() {
+          _isLoadingMcuHistory = false;
+        });
+      }
+    }
+  }
+  
   void _setupListeners() {
     _connectionSubscription = _bleService.connectionState.listen((state) {
       setState(() {
@@ -102,8 +139,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _startLocationTracking();
           // Sync saved configuration to device
           _syncSavedConfiguration();
+          // Fetch MCU GPS history
+          _fetchMcuGpsHistory();
         } else if (state == BluetoothConnectionState.disconnected) {
           _connectingDeviceId = null;
+          // Clear MCU history on disconnect
+          _mcuGpsHistory = [];
           // Stop location tracking when disconnected
           _stopLocationTracking();
           _checkBluetoothAndScan();
@@ -708,13 +749,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 style: theme.textTheme.titleMedium,
                               ),
                               const Spacer(),
-                              // Show clear button when in list view
+                              // Show clear button when in Phone list view
                               if (_tabController.index == 1 && _locationHistory.isNotEmpty)
                                 IconButton(
                                   icon: const Icon(Icons.clear_all),
                                   color: theme.colorScheme.error,
                                   onPressed: _clearLocationHistory,
-                                  tooltip: 'Clear History',
+                                  tooltip: 'Clear Phone History',
+                                ),
+                              // Show refresh button when in MCU view
+                              if (_tabController.index == 2 && _bleService.isConnected)
+                                IconButton(
+                                  icon: const Icon(Icons.refresh),
+                                  color: theme.colorScheme.primary,
+                                  onPressed: _fetchMcuGpsHistory,
+                                  tooltip: 'Refresh MCU History',
                                 ),
                               // Show download button when in map view
                               if (_tabController.index == 0 && _locationHistory.isNotEmpty)
@@ -740,7 +789,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             ],
                           ),
                         ),
-                        // Tab bar for map/list view
+                        // Tab bar for map/list/mcu view
                         TabBar(
                           controller: _tabController,
                           tabs: const [
@@ -750,7 +799,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             ),
                             Tab(
                               icon: Icon(Icons.list),
-                              text: 'List',
+                              text: 'Phone',
+                            ),
+                            Tab(
+                              icon: Icon(Icons.memory),
+                              text: 'MCU',
                             ),
                           ],
                         ),
@@ -911,6 +964,174 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         ),
                           ),
+                        // MCU GPS History View
+                        Builder(
+                          builder: (context) {
+                            if (!_bleService.isConnected) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.bluetooth_disabled,
+                                      size: 64,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Connect to device to view MCU GPS history',
+                                      style: theme.textTheme.bodyLarge?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            } else if (_isLoadingMcuHistory) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            } else if (_mcuGpsHistory.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.location_off,
+                                      size: 64,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No GPS history available from MCU',
+                                      style: theme.textTheme.bodyLarge?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 24),
+                                    ElevatedButton.icon(
+                                      onPressed: _fetchMcuGpsHistory,
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('Refresh'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+                            
+                            return RefreshIndicator(
+                              onRefresh: _fetchMcuGpsHistory,
+                              child: ListView.builder(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                itemCount: _mcuGpsHistory.length,
+                                itemBuilder: (context, index) {
+                                  final point = _mcuGpsHistory[index];
+                                  final timestamp = point['timestamp'] ?? 0;
+                                  final date = timestamp > 0 
+                                    ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
+                                    : DateTime.now();
+                                  
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    child: ListTile(
+                                      onTap: () {
+                                        final lat = point['latitude'] ?? 0;
+                                        final lng = point['longitude'] ?? 0;
+                                        Clipboard.setData(ClipboardData(text: '$lat, $lng'));
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Coordinates copied to clipboard'),
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                        );
+                                      },
+                                      leading: CircleAvatar(
+                                        backgroundColor: theme.colorScheme.secondaryContainer,
+                                        child: Text(
+                                          '${index + 1}',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.onSecondaryContainer,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      title: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.memory,
+                                            size: 16,
+                                            color: theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'MCU Point #${index + 1}',
+                                            style: theme.textTheme.bodyLarge?.copyWith(
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const SizedBox(height: 4),
+                                          if (timestamp > 0)
+                                            Text(
+                                              '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}',
+                                              style: theme.textTheme.bodySmall,
+                                            ),
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.location_on,
+                                                size: 14,
+                                                color: theme.colorScheme.secondary,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  'Lat: ${(point['latitude'] ?? 0).toStringAsFixed(6)}',
+                                                  style: theme.textTheme.bodyMedium,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          Row(
+                                            children: [
+                                              const SizedBox(width: 18),
+                                              Expanded(
+                                                child: Text(
+                                                  'Lng: ${(point['longitude'] ?? 0).toStringAsFixed(6)}',
+                                                  style: theme.textTheme.bodyMedium,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      trailing: index == 0
+                                        ? Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: theme.colorScheme.secondary,
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              'Latest',
+                                              style: theme.textTheme.bodySmall?.copyWith(
+                                                color: theme.colorScheme.onSecondary,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                    ),
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   ),

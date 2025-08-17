@@ -317,6 +317,107 @@ class BikeBluetoothService {
     }
   }
   
+  Future<List<Map<String, dynamic>>?> readGPSHistory() async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-GPSHistory');
+        return null;
+      }
+      
+      developer.log('Reading GPS history from device...', name: 'BLE-GPSHistory');
+      
+      // Find the bike tracker service
+      final services = await _connectedDevice!.discoverServices();
+      
+      for (BluetoothService service in services) {
+        if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
+          // Find history characteristic
+          for (BluetoothCharacteristic characteristic in service.characteristics) {
+            if (characteristic.uuid.toString().toLowerCase() == AppConstants.historyCharUuid.toLowerCase()) {
+              // Read the GPS history
+              List<int> value = await characteristic.read();
+              String jsonString = String.fromCharCodes(value);
+              
+              developer.log('GPS history received: $jsonString', name: 'BLE-GPSHistory');
+              
+              // Parse the JSON array
+              return _parseGPSHistory(jsonString);
+            }
+          }
+        }
+      }
+      
+      developer.log('GPS history characteristic not found', name: 'BLE-GPSHistory');
+      return null;
+    } catch (e) {
+      developer.log('Error reading GPS history: $e', name: 'BLE-GPSHistory', error: e);
+      return null;
+    }
+  }
+  
+  List<Map<String, dynamic>>? _parseGPSHistory(String jsonString) {
+    try {
+      // The MCU sends GPS history as a JSON array
+      // Format: [{"lat":"...","lon":"...","time":...}, ...]
+      List<Map<String, dynamic>> history = [];
+      
+      // Remove outer brackets and split by objects
+      jsonString = jsonString.trim();
+      if (jsonString.startsWith('[')) {
+        jsonString = jsonString.substring(1);
+      }
+      if (jsonString.endsWith(']')) {
+        jsonString = jsonString.substring(0, jsonString.length - 1);
+      }
+      
+      // Split by }, { to get individual objects
+      List<String> points = jsonString.split('},');
+      
+      for (String point in points) {
+        // Clean up the point string
+        point = point.trim();
+        if (!point.startsWith('{')) {
+          point = '{$point';
+        }
+        if (!point.endsWith('}')) {
+          point = '$point}';
+        }
+        
+        // Parse individual GPS point
+        Map<String, dynamic> gpsPoint = {};
+        
+        // Extract latitude
+        final latMatch = RegExp(r'"lat":"([^"]*)"').firstMatch(point);
+        if (latMatch != null) {
+          gpsPoint['latitude'] = double.tryParse(latMatch.group(1) ?? '0') ?? 0.0;
+        }
+        
+        // Extract longitude
+        final lonMatch = RegExp(r'"lon":"([^"]*)"').firstMatch(point);
+        if (lonMatch != null) {
+          gpsPoint['longitude'] = double.tryParse(lonMatch.group(1) ?? '0') ?? 0.0;
+        }
+        
+        // Extract timestamp
+        final timeMatch = RegExp(r'"time":(\d+)').firstMatch(point);
+        if (timeMatch != null) {
+          gpsPoint['timestamp'] = int.tryParse(timeMatch.group(1) ?? '0') ?? 0;
+        }
+        
+        // Only add valid points
+        if (gpsPoint.containsKey('latitude') && gpsPoint.containsKey('longitude')) {
+          history.add(gpsPoint);
+        }
+      }
+      
+      developer.log('Parsed ${history.length} GPS points from history', name: 'BLE-GPSHistory');
+      return history;
+    } catch (e) {
+      developer.log('Error parsing GPS history: $e', name: 'BLE-GPSHistory', error: e);
+      return null;
+    }
+  }
+  
   Future<bool> sendConfiguration({
     required String phoneNumber,
     required int updateInterval,
