@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 import '../services/bluetooth_service.dart' as bike_ble;
@@ -46,6 +47,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   StreamSubscription? _connectionSubscription;
   StreamSubscription? _scanSubscription;
   StreamSubscription? _locationSubscription;
+  StreamSubscription? _bluetoothStateSubscription;
+  
+  BluetoothAdapterState _bluetoothState = BluetoothAdapterState.unknown;
   
   @override
   void initState() {
@@ -54,9 +58,27 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _tabController.addListener(() {
       setState(() {}); // Rebuild to show/hide clear button
     });
+    _initializeApp();
+  }
+  
+  Future<void> _initializeApp() async {
+    // Initialize Bluetooth monitoring
+    _bleService.initializeBluetoothMonitoring();
+    
+    // Get initial Bluetooth state
+    _bluetoothState = await _bleService.getCurrentBluetoothState();
+    
     _setupListeners();
-    _loadLocationHistory();
-    _initializeAndAutoConnect();
+    await _loadLocationHistory();
+    
+    // Check if Bluetooth is off and prompt user
+    if (_bluetoothState == BluetoothAdapterState.off) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showBluetoothOffDialog();
+      });
+    } else {
+      await _initializeAndAutoConnect();
+    }
   }
   
   Future<void> _loadLocationHistory() async {
@@ -77,6 +99,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _availableDevices.clear();
           // Start location tracking when connected
           _startLocationTracking();
+          // Sync saved configuration to device
+          _syncSavedConfiguration();
         } else if (state == BluetoothConnectionState.disconnected) {
           _connectingDeviceId = null;
           // Stop location tracking when disconnected
@@ -90,6 +114,26 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _availableDevices = devices.where((d) => d.isBikeTracker).toList();
       });
+    });
+    
+    // Listen to Bluetooth adapter state changes
+    _bluetoothStateSubscription = _bleService.bluetoothState.listen((state) {
+      setState(() {
+        _bluetoothState = state;
+      });
+      
+      if (state == BluetoothAdapterState.off) {
+        // Stop scanning if Bluetooth is turned off
+        _isScanning = false;
+        _availableDevices.clear();
+        // Show dialog to prompt user to turn on Bluetooth
+        _showBluetoothOffDialog();
+      } else if (state == BluetoothAdapterState.on) {
+        // Bluetooth turned on, start scanning if not connected
+        if (_connectionState != BluetoothConnectionState.connected) {
+          _checkBluetoothAndScan();
+        }
+      }
     });
     
     // Location updates listener
@@ -238,8 +282,154 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
   
+  void _showBluetoothOffDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must take action
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.bluetooth_disabled, color: Colors.red),
+            SizedBox(width: 12),
+            Text('Bluetooth is Off'),
+          ],
+        ),
+        content: const Text(
+          'Bluetooth is required to connect to your bike tracker. '
+          'Please turn on Bluetooth to use this app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Try to open Bluetooth settings (platform specific)
+              if (Theme.of(context).platform == TargetPlatform.android) {
+                // For Android, we can try to prompt the user
+                FlutterBluePlus.turnOn();
+              }
+            },
+            child: const Text('Turn On Bluetooth'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _syncSavedConfiguration() async {
+    try {
+      // Load saved configuration from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final phoneNumber = prefs.getString('config_phone');
+      final updateInterval = prefs.getInt('config_interval');
+      final alertsEnabled = prefs.getBool('config_alerts');
+      
+      // Check if we have saved configuration
+      if (phoneNumber != null && phoneNumber.isNotEmpty) {
+        developer.log('Syncing saved configuration to device...', name: 'HomeScreen');
+        
+        // Wait a moment for the connection to stabilize
+        await Future.delayed(const Duration(seconds: 1));
+        
+        // Send configuration to device
+        final success = await _bleService.sendConfiguration(
+          phoneNumber: phoneNumber,
+          updateInterval: updateInterval ?? 300,
+          alertEnabled: alertsEnabled ?? true,
+        );
+        
+        if (success) {
+          developer.log('Configuration synced successfully', name: 'HomeScreen');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Configuration synced to device'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        } else {
+          developer.log('Failed to sync configuration', name: 'HomeScreen');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to sync configuration'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+      } else {
+        developer.log('No saved configuration found to sync', name: 'HomeScreen');
+      }
+    } catch (e) {
+      developer.log('Error syncing configuration: $e', name: 'HomeScreen', error: e);
+    }
+  }
+  
   Widget _buildConnectionStatus() {
     final theme = Theme.of(context);
+    
+    // Check Bluetooth state first
+    if (_bluetoothState == BluetoothAdapterState.off) {
+      return Card(
+        color: theme.colorScheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.bluetooth_disabled,
+                    color: theme.colorScheme.error,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Bluetooth is Off',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                        Text(
+                          'Turn on Bluetooth to connect',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      FlutterBluePlus.turnOn();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.error,
+                      foregroundColor: theme.colorScheme.onError,
+                    ),
+                    child: const Text('Enable'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     
     String statusText;
     IconData statusIcon;
@@ -825,6 +1015,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _connectionSubscription?.cancel();
     _scanSubscription?.cancel();
     _locationSubscription?.cancel();
+    _bluetoothStateSubscription?.cancel();
     _locationService.dispose();
     super.dispose();
   }

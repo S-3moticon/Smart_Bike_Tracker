@@ -14,9 +14,11 @@ class BikeBluetoothService {
   
   final _scanResultsController = StreamController<List<BikeDevice>>.broadcast();
   final _connectionStateController = StreamController<BluetoothConnectionState>.broadcast();
+  final _bluetoothStateController = StreamController<BluetoothAdapterState>.broadcast();
   
   Stream<List<BikeDevice>> get scanResults => _scanResultsController.stream;
   Stream<BluetoothConnectionState> get connectionState => _connectionStateController.stream;
+  Stream<BluetoothAdapterState> get bluetoothState => _bluetoothStateController.stream;
   
   final List<BikeDevice> _discoveredDevices = [];
   BluetoothDevice? _connectedDevice;
@@ -32,9 +34,27 @@ class BikeBluetoothService {
   final _deviceStatusController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get deviceStatus => _deviceStatusController.stream;
   
+  // Bluetooth adapter state monitoring
+  StreamSubscription? _adapterStateSubscription;
+  
   static const String _prefKeyLastDevice = 'last_connected_device_id';
   static const String _prefKeyLastDeviceName = 'last_connected_device_name';
   static const String _prefKeyAutoConnect = 'auto_connect_enabled';
+  
+  // Initialize Bluetooth state monitoring
+  void initializeBluetoothMonitoring() {
+    _adapterStateSubscription?.cancel();
+    _adapterStateSubscription = FlutterBluePlus.adapterState.listen((state) {
+      developer.log('Bluetooth adapter state changed: $state', name: 'BLE');
+      _bluetoothStateController.add(state);
+      
+      // If Bluetooth is turned off while connected, handle disconnection
+      if (state == BluetoothAdapterState.off && _connectedDevice != null) {
+        developer.log('Bluetooth turned off, disconnecting...', name: 'BLE');
+        _handleDisconnection();
+      }
+    });
+  }
   
   Future<bool> checkBluetoothAvailability() async {
     try {
@@ -693,10 +713,18 @@ class BikeBluetoothService {
     _reconnectionTimer?.cancel();
     _scanSubscription?.cancel();
     _connectionSubscription?.cancel();
+    _adapterStateSubscription?.cancel();
+    _statusSubscription?.cancel();
     _scanResultsController.close();
     _connectionStateController.close();
+    _bluetoothStateController.close();
+    _deviceStatusController.close();
   }
   
   BluetoothDevice? get connectedDevice => _connectedDevice;
   bool get isConnected => _connectedDevice != null;
+  
+  Future<BluetoothAdapterState> getCurrentBluetoothState() async {
+    return await FlutterBluePlus.adapterState.first;
+  }
 }
