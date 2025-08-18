@@ -19,7 +19,7 @@ struct GPSData {
   String speed;
   String course;
   bool valid;
-  unsigned long timestamp;  // Millis when acquired
+  uint64_t timestamp;  // Unix timestamp in milliseconds
 };
 
 // GPS History Configuration
@@ -30,7 +30,7 @@ struct GPSData {
 struct GPSLogEntry {
   float lat;
   float lon;
-  unsigned long timestamp;
+  uint64_t timestamp;  // Unix timestamp in milliseconds
   uint8_t source;  // 0=Phone, 1=SIM7070G
 };
 

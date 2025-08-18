@@ -6,9 +6,74 @@
 
 #include "gps_handler.h"
 #include "sim7070g.h"
+#include <time.h>
 
 // Preferences for GPS data storage
 static Preferences gpsPrefs;
+
+/*
+ * Convert GPS datetime string to Unix timestamp in milliseconds
+ * GPS datetime format: YYYYMMDDHHMMSS.sss
+ * Returns: Unix timestamp in milliseconds
+ */
+uint64_t parseGPSDateTimeToUnixMillis(const String& datetime) {
+  if (datetime.length() < 14) {
+    // Return a reasonable current time estimate (Dec 2024)
+    return 1735689600000ULL; // Dec 2024 baseline
+  }
+  
+  // Extract date and time components
+  int year = datetime.substring(0, 4).toInt();
+  int month = datetime.substring(4, 6).toInt();
+  int day = datetime.substring(6, 8).toInt();
+  int hour = datetime.substring(8, 10).toInt();
+  int minute = datetime.substring(10, 12).toInt();
+  int second = datetime.substring(12, 14).toInt();
+  
+  // Validate components
+  if (year < 2020 || year > 2100 || month < 1 || month > 12 || 
+      day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    // Return current time estimate
+    return 1735689600000ULL; // Dec 2024 baseline
+  }
+  
+  // Use a simpler approach - calculate seconds since 2024
+  // This avoids overflow issues with large numbers
+  uint64_t secondsSince2024 = 0;
+  
+  // Years since 2024
+  for (int y = 2024; y < year; y++) {
+    if ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)) {
+      secondsSince2024 += 366ULL * 86400ULL; // Leap year
+    } else {
+      secondsSince2024 += 365ULL * 86400ULL;
+    }
+  }
+  
+  // Days in current year
+  int daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+    daysInMonth[1] = 29; // February in leap year
+  }
+  
+  uint64_t daysThisYear = 0;
+  for (int m = 1; m < month; m++) {
+    daysThisYear += daysInMonth[m - 1];
+  }
+  daysThisYear += (day - 1);
+  
+  secondsSince2024 += daysThisYear * 86400ULL;
+  secondsSince2024 += hour * 3600ULL;
+  secondsSince2024 += minute * 60ULL;
+  secondsSince2024 += second;
+  
+  // Add Unix timestamp for Jan 1, 2024 00:00:00 UTC
+  uint64_t unixTime2024 = 1704067200ULL;
+  uint64_t totalSeconds = unixTime2024 + secondsSince2024;
+  
+  // Convert to milliseconds
+  return totalSeconds * 1000ULL;
+}
 
 /*
  * Acquire GPS fix with retry mechanism
@@ -39,7 +104,8 @@ bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
     if (requestGNSSInfo(response)) {
       if (parseGNSSData(response, data)) {
         fixAcquired = true;
-        data.timestamp = millis();
+        // Convert GPS datetime to Unix timestamp in milliseconds
+        data.timestamp = parseGPSDateTimeToUnixMillis(data.datetime);
         saveGPSData(data);
       }
     }
@@ -140,7 +206,9 @@ void saveGPSData(const GPSData& data) {
   gpsPrefs.putString("speed", data.speed);
   gpsPrefs.putString("course", data.course);
   gpsPrefs.putBool("valid", data.valid);
-  gpsPrefs.putULong("timestamp", data.timestamp);
+  // Store 64-bit timestamp as two 32-bit values
+  gpsPrefs.putULong("timestamp_hi", (uint32_t)(data.timestamp >> 32));
+  gpsPrefs.putULong("timestamp_lo", (uint32_t)(data.timestamp & 0xFFFFFFFF));
   gpsPrefs.end();
 }
 
@@ -157,7 +225,10 @@ bool loadGPSData(GPSData& data) {
   data.speed = gpsPrefs.getString("speed", "");
   data.course = gpsPrefs.getString("course", "");
   data.valid = gpsPrefs.getBool("valid", false);
-  data.timestamp = gpsPrefs.getULong("timestamp", 0);
+  // Load 64-bit timestamp from two 32-bit values
+  uint32_t timestamp_hi = gpsPrefs.getULong("timestamp_hi", 0);
+  uint32_t timestamp_lo = gpsPrefs.getULong("timestamp_lo", 0);
+  data.timestamp = ((uint64_t)timestamp_hi << 32) | timestamp_lo;
   
   gpsPrefs.end();
   
@@ -239,7 +310,39 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   float lat = data.latitude.toFloat();
   float lon = data.longitude.toFloat();
   
-  return logGPSPoint(lat, lon, source);
+  // Use the timestamp from GPSData if available
+  gpsLogPrefs.begin(GPS_LOG_NAMESPACE, false);
+  
+  // Create key for this entry
+  String keyLat = "lat_" + String(logIndex);
+  String keyLon = "lon_" + String(logIndex);
+  String keyTime = "time_" + String(logIndex);
+  String keySrc = "src_" + String(logIndex);
+  
+  // Store the GPS point with proper timestamp
+  gpsLogPrefs.putFloat(keyLat.c_str(), lat);
+  gpsLogPrefs.putFloat(keyLon.c_str(), lon);
+  // Store 64-bit timestamp as two 32-bit values
+  String keyTimeHi = "timeH_" + String(logIndex);
+  String keyTimeLo = "timeL_" + String(logIndex);
+  gpsLogPrefs.putULong(keyTimeHi.c_str(), (uint32_t)(data.timestamp >> 32));
+  gpsLogPrefs.putULong(keyTimeLo.c_str(), (uint32_t)(data.timestamp & 0xFFFFFFFF));
+  gpsLogPrefs.putUChar(keySrc.c_str(), source);
+  
+  // Update index (circular buffer)
+  logIndex = (logIndex + 1) % MAX_GPS_HISTORY;
+  
+  // Update count
+  if (logCount < MAX_GPS_HISTORY) {
+    logCount++;
+  }
+  
+  // Save metadata
+  gpsLogPrefs.putInt("logIndex", logIndex);
+  gpsLogPrefs.putInt("logCount", logCount);
+  gpsLogPrefs.end();
+  
+  return true;
 }
 
 /*
@@ -257,7 +360,29 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
   // Store the GPS point
   gpsLogPrefs.putFloat(keyLat.c_str(), lat);
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
-  gpsLogPrefs.putULong(keyTime.c_str(), millis());
+  
+  // For phone GPS (source 0), use an estimated Unix timestamp
+  uint64_t timestamp;
+  if (source == 0) {
+    // Phone GPS - use current time estimate
+    // Since we don't have real time from phone, use a fixed recent date
+    timestamp = 1735689600000ULL + millis(); // Dec 31, 2024 baseline + millis
+  } else {
+    // SIM7070G GPS should have proper timestamp from GPSData
+    // This shouldn't happen, but use fallback if needed
+    GPSData lastGPS;
+    if (loadGPSData(lastGPS) && lastGPS.timestamp > 1609459200000ULL) {
+      timestamp = lastGPS.timestamp;
+    } else {
+      timestamp = 1735689600000ULL + millis(); // Dec 31, 2024 baseline
+    }
+  }
+  
+  // Store 64-bit timestamp as two 32-bit values
+  String keyTimeHi = "timeH_" + String(logIndex);
+  String keyTimeLo = "timeL_" + String(logIndex);
+  gpsLogPrefs.putULong(keyTimeHi.c_str(), (uint32_t)(timestamp >> 32));
+  gpsLogPrefs.putULong(keyTimeLo.c_str(), (uint32_t)(timestamp & 0xFFFFFFFF));
   gpsLogPrefs.putUChar(keySrc.c_str(), source);
   
   // Update index (circular buffer)
@@ -306,12 +431,28 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
   // Read the entry
   String keyLat = "lat_" + String(actualIndex);
   String keyLon = "lon_" + String(actualIndex);
-  String keyTime = "time_" + String(actualIndex);
+  String keyTimeHi = "timeH_" + String(actualIndex);
+  String keyTimeLo = "timeL_" + String(actualIndex);
   String keySrc = "src_" + String(actualIndex);
   
   entry.lat = gpsLogPrefs.getFloat(keyLat.c_str(), 0);
   entry.lon = gpsLogPrefs.getFloat(keyLon.c_str(), 0);
-  entry.timestamp = gpsLogPrefs.getULong(keyTime.c_str(), 0);
+  
+  // Read 64-bit timestamp from two 32-bit values
+  uint32_t timestamp_hi = gpsLogPrefs.getULong(keyTimeHi.c_str(), 0);
+  uint32_t timestamp_lo = gpsLogPrefs.getULong(keyTimeLo.c_str(), 0);
+  entry.timestamp = ((uint64_t)timestamp_hi << 32) | timestamp_lo;
+  
+  // Fallback for old format (if timestamp_hi is 0, try old single value)
+  if (timestamp_hi == 0) {
+    String keyTime = "time_" + String(actualIndex);
+    entry.timestamp = gpsLogPrefs.getULong(keyTime.c_str(), 0);
+    // If old value looks like millis (small number), add baseline
+    if (entry.timestamp < 1000000000000ULL) {
+      entry.timestamp = 1735689600000ULL + entry.timestamp; // Dec 31, 2024 baseline
+    }
+  }
+  
   entry.source = gpsLogPrefs.getUChar(keySrc.c_str(), 0);
   
   gpsLogPrefs.end();
