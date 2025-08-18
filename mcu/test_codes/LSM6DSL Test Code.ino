@@ -1,302 +1,460 @@
-/*
- * =====================================================================
- * LSM6DSL ACCELEROMETER TEST
- * =====================================================================
- * * Tests the LSM6DSL 6-axis Accelerometer/Gyroscope for tilt and fall detection.
- * * Pin Configuration:
- * - SDA: GPIO21 (I2C Data)
- * - SCL: GPIO22 (I2C Clock) 
- * - INT1: GPIO34 (Accelerometer Interrupt - not used in this test)
- * * Sensor:
- * - LSM6DSL: 6-axis Accelerometer/Gyroscope (I2C Address: 0x6A or 0x6B)
- * * =====================================================================
- */
-
 #include <Wire.h>
-#include <math.h> // Required for sqrt and abs functions for magnitude calculation
+#include "esp_sleep.h"
 
 // Pin Definitions
+#define LED_PIN 15
+#define INT1_PIN GPIO_NUM_4
+#define INT2_PIN GPIO_NUM_2
 #define SDA_PIN 21
 #define SCL_PIN 22
-#define INT1_PIN 27    // Not used in this test, but available for interrupts
 
-// LSM6DSL I2C addresses
+// LSM6DSL I2C Addresses
 #define LSM6DSL_ADDR1 0x6A
 #define LSM6DSL_ADDR2 0x6B
-uint8_t lsm6dsl_address = LSM6DSL_ADDR1;
+uint8_t LSM6DSL_ADDR = LSM6DSL_ADDR1;
 
-// LSM6DSL Register addresses
-#define LSM6DSL_WHO_AM_I 0x0F
-#define LSM6DSL_CTRL1_XL 0x10
-#define LSM6DSL_CTRL3_C 0x12
-#define LSM6DSL_OUTX_L_XL 0x28
+// LSM6DSL Registers
+#define WHO_AM_I 0x0F
+#define CTRL1_XL 0x10
+#define CTRL2_G 0x11
+#define CTRL3_C 0x12
+#define CTRL4_C 0x13
+#define CTRL5_C 0x14
+#define CTRL6_C 0x15
+#define CTRL7_G 0x16
+#define CTRL8_XL 0x17
+#define CTRL9_XL 0x18
+#define CTRL10_C 0x19
 
-// Variables for accelerometer data
-float accelX = 0.0, accelY = 0.0, accelZ = 0.0;
-bool lsm6dsl_ok = false;
-bool tiltDetected = false;
-bool fallDetected = false; // New flag for fall detection
+#define WAKE_UP_SRC 0x1B
+#define TAP_CFG 0x58
+#define WAKE_UP_THS 0x5B
+#define WAKE_UP_DUR 0x5C
+#define FREE_FALL 0x5D
+#define MD1_CFG 0x5E
+#define MD2_CFG 0x5F
 
-// Timing
-unsigned long lastReading = 0;
-const unsigned long READING_INTERVAL = 100; // Increased reading frequency to 100ms for better fall detection
+#define FUNC_CFG_ACCESS 0x01
+#define FUNC_SRC1 0x53
+#define FUNC_SRC2 0x54
 
-// Thresholds for detection
-// TILT_THRESHOLD: Z-axis acceleration threshold. If Z-axis accel drops below this
-// (e.g., when the sensor is tilted 90 degrees, Z-axis acceleration approaches 0g).
-// A small non-zero value like 0.1g is used to account for sensor noise and minor variations.
-const float TILT_THRESHOLD_Z_AXIS = 0.1; // g (if Z-axis accel is below this, consider tilted 90 degrees)
+#define OUTX_L_XL 0x28
+#define OUTY_L_XL 0x2A
+#define OUTZ_L_XL 0x2C
 
-// FALL_THRESHOLD: Magnitude of total acceleration for freefall detection.
-// In freefall, the sensor experiences close to 0g, so the magnitude of the
-// acceleration vector (sqrt(X^2 + Y^2 + Z^2)) should be very low.
-// Your provided FALL_THRESHOLD = 1.1 is close to 1g (normal gravity),
-// which is not indicative of freefall. A value close to 0 is required.
-const float FALL_THRESHOLD_MAGNITUDE = 0.2; // g (if total accel magnitude is below this, consider falling)
+// Motion detection settings
+#define MOTION_THRESHOLD_LOW 0.10
+#define MOTION_THRESHOLD_MED 0.25
+#define MOTION_THRESHOLD_HIGH 0.50
+#define NO_MOTION_SLEEP_TIME 10000  // 10 seconds to sleep
 
+// Global variables
+float lastX = 0, lastY = 0, lastZ = 0;
+bool motionDetected = false;
+unsigned long lastMotionTime = 0;
+unsigned long motionStartTime = 0;
+unsigned long lastDisplayTime = 0;
+RTC_DATA_ATTR int motionEventCount = 0;
+RTC_DATA_ATTR int wakeCount = 0;
 
 void setup() {
   Serial.begin(115200);
-  delay(2000);
   
-  Serial.println("======================================");
-  Serial.println("   LSM6DSL ACCELEROMETER TEST");
-  Serial.println("======================================");
-  Serial.println("Pin Config: SDA=21, SCL=22, INT1=34");
-  Serial.println("");
+  // Wait for serial connection with timeout
+  unsigned long serialStart = millis();
+  while (!Serial && (millis() - serialStart < 5000)) {
+    delay(10);
+  }
   
-  // Initialize I2C
+  delay(1000);  // Extra delay for stability
+  
+  Serial.println("\n\n========================================");
+  Serial.println("ESP32 LSM6DSL Wake-on-Motion System");
+  Serial.println("========================================");
+  Serial.flush();
+  delay(100);
+  
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(INT1_PIN, INPUT_PULLUP);
+  pinMode(INT2_PIN, INPUT_PULLUP);
+  
+  // Blink LED to show board is alive
+  for(int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(100);
+    digitalWrite(LED_PIN, LOW);
+    delay(100);
+  }
+  
+  // Check wake reason
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+    wakeCount++;
+    Serial.println("\n🚨 MOTION WAKE - ESP32 AWAKE!");
+    
+    uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
+    if (wakeup_pin_mask & (1ULL << INT1_PIN)) {
+      Serial.println("Woken by INT1 (GPIO4)");
+    }
+    if (wakeup_pin_mask & (1ULL << INT2_PIN)) {
+      Serial.println("Woken by INT2 (GPIO2)");
+    }
+    
+    Serial.printf("Wake count: %d | Total events: %d\n\n", wakeCount, motionEventCount);
+    digitalWrite(LED_PIN, HIGH);
+    delay(1000);
+    digitalWrite(LED_PIN, LOW);
+  } else {
+    Serial.println("\nNormal boot (not wake from sleep)");
+    Serial.println("System will sleep after 10 seconds of no motion");
+    Serial.println("Motion will wake ESP32 via INT1/INT2\n");
+  }
+  
+  Serial.println("Initializing I2C...");
   Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(100000); // 100kHz
-  Serial.println("I2C initialized");
+  Wire.setClock(100000);
+  delay(100);
   
-  // Scan for I2C devices
+  // Scan I2C
   scanI2C();
   
   // Initialize LSM6DSL
   Serial.println("Initializing LSM6DSL...");
-  if (initLSM6DSL()) {
-    lsm6dsl_ok = true;
-    Serial.print("✓ LSM6DSL initialized successfully at address 0x");
-    Serial.println(lsm6dsl_address, HEX);
-  } else {
-    Serial.println("✗ LSM6DSL initialization failed");
+  if (!initLSM6DSL()) {
+    Serial.println("❌ LSM6DSL not found! Check wiring:");
+    Serial.println("INT1->GPIO4, INT2->GPIO2");
+    Serial.println("SDA->GPIO21, SCL->GPIO22");
+    Serial.println("VCC->3.3V, GND->GND");
+    while(1) {
+      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+      delay(500);
+    }
   }
   
-  Serial.println("");
-  Serial.println("Starting sensor readings...");
-  Serial.println("Format: Accel X,Y,Z | Magnitude | Tilt Status | Fall Status");
-  Serial.println("=====================================");
+  Serial.println("✅ LSM6DSL initialized successfully");
+  Serial.printf("Address: 0x%02X\n", LSM6DSL_ADDR);
+  
+  // Test interrupts
+  testInterrupts();
+  
+  Serial.println("\nMonitoring motion...\n");
+  lastMotionTime = millis();
 }
 
 void loop() {
-  unsigned long currentTime = millis();
+  static unsigned long lastDebugPrint = 0;
   
-  if (currentTime - lastReading >= READING_INTERVAL) {
-    lastReading = currentTime;
-    
-    // Read accelerometer data
-    readLSM6DSL();
-    
-    // Check for tilt and fall conditions
-    checkTilt();
-    checkFall(); // New function call
-    
-    // Display readings
-    displayReadings();
+  // Print debug info every 2 seconds
+  if (millis() - lastDebugPrint > 2000) {
+    if (readAccelerometer()) {
+      Serial.printf("Status - X:%.2f Y:%.2f Z:%.2f | INT1:%d INT2:%d\n", 
+                    lastX, lastY, lastZ, 
+                    digitalRead(INT1_PIN), digitalRead(INT2_PIN));
+    }
+    lastDebugPrint = millis();
   }
-}
-
-void readLSM6DSL() {
-  if (lsm6dsl_ok) {
-    // Read raw accelerometer data from registers
-    uint8_t rawData[6];
-    for (int i = 0; i < 6; i++) {
-      rawData[i] = readLSM6DSLRegister(LSM6DSL_OUTX_L_XL + i);
+  
+  if (readAccelerometer()) {
+    float x = lastX;
+    float y = lastY;
+    float z = lastZ;
+    
+    static float refX = 0, refY = 0, refZ = 1.0;
+    static bool firstReading = true;
+    
+    if (firstReading) {
+      refX = x;
+      refY = y;
+      refZ = z;
+      firstReading = false;
     }
     
-    // Convert to signed 16-bit values (low byte | high byte << 8)
-    int16_t rawX = (rawData[1] << 8) | rawData[0];
-    int16_t rawY = (rawData[3] << 8) | rawData[2];
-    int16_t rawZ = (rawData[5] << 8) | rawData[4];
+    float deltaX = abs(x - refX);
+    float deltaY = abs(y - refY);
+    float deltaZ = abs(z - refZ);
+    float totalDelta = sqrt(deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ);
     
-    // Convert to 'g' values.
-    // For a ±2g full-scale range (configured in CTRL1_XL), the sensitivity is
-    // 0.061 mg/LSB. 1 mg = 0.001 g, so 0.061 mg/LSB = 0.000061 g/LSB.
-    // Alternatively, for ±2g, the full range is 4g (from -2g to +2g) represented by 65536 LSBs (2^16).
-    // So, 1 LSB = 4g / 65536 LSB = 0.000061035 g/LSB.
-    // To get 'g' from raw reading, it's (raw_value * 2.0) / 32768.0 for a +/-2g scale.
-    accelX = (float)rawX * 2.0 / 32768.0;
-    accelY = (float)rawY * 2.0 / 32768.0;
-    accelZ = (float)rawZ * 2.0 / 32768.0;
-  } else {
-    accelX = accelY = accelZ = 0.0;
-  }
-}
-
-void checkTilt() {
-  bool newTiltState = false;
-  
-  if (lsm6dsl_ok) {
-    // A simplified tilt detection: if the Z-axis acceleration is close to 0g,
-    // it implies the sensor is oriented roughly 90 degrees relative to gravity along X or Y axis.
-    if (accelZ < TILT_THRESHOLD_Z_AXIS) { // Using fabs for absolute value
-      newTiltState = true;
-    }
-  }
-  
-  // Detect tilt state changes and print messages
-  if (newTiltState && !tiltDetected) {
-    Serial.println("🚨 TILT DETECTED! 🚨");
-  } else if (!newTiltState && tiltDetected) {
-    Serial.println("✅ Tilt cleared");
-  }
-  
-  tiltDetected = newTiltState; // Update the global tilt flag
-}
-
-void checkFall() {
-  bool newFallState = false;
-  
-  if (lsm6dsl_ok) {
-    // Calculate the magnitude of the acceleration vector.
-    // In freefall, the apparent acceleration on all axes should be close to 0g.
-    float accelerationMagnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
-    
-    if (accelerationMagnitude < FALL_THRESHOLD_MAGNITUDE) {
-      newFallState = true;
-    }
-  }
-  
-  // Detect fall state changes and print messages
-  if (newFallState && !fallDetected) {
-    Serial.println("💥 FALL DETECTED! (Freefall) 💥");
-  } else if (!newFallState && fallDetected) {
-    Serial.println("⬆️ Fall recovered");
-  }
-  
-  fallDetected = newFallState; // Update the global fall flag
-}
-
-void displayReadings() {
-  // Accelerometer readings
-  if (lsm6dsl_ok) {
-    Serial.print("Accel: ");
-    Serial.print("X:");
-    Serial.print(accelX, 2);
-    Serial.print(" Y:");
-    Serial.print(accelY, 2);
-    Serial.print(" Z:");
-    Serial.print(accelZ, 2);
-    Serial.print("g");
-
-    // Calculate and display magnitude
-    float accelerationMagnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
-    Serial.print(" | Mag: ");
-    Serial.print(accelerationMagnitude, 2);
-    Serial.print("g");
-  } else {
-    Serial.print("Accel: ERROR | Mag: ERROR");
-  }
-  
-  Serial.print(" | ");
-  
-  // Tilt status
-  if (tiltDetected) {
-    Serial.print("Tilt: YES");
-  } else {
-    Serial.print("Tilt: NO");
-  }
-
-  Serial.print(" | ");
-
-  // Fall status
-  if (fallDetected) {
-    Serial.print("Fall: YES");
-  } else {
-    Serial.print("Fall: NO");
-  }
-  
-  Serial.println("");
-}
-
-bool initLSM6DSL() {
-  // Try both possible I2C addresses (0x6A and 0x6B)
-  uint8_t addresses[] = {LSM6DSL_ADDR1, LSM6DSL_ADDR2};
-  
-  for (int i = 0; i < 2; i++) {
-    lsm6dsl_address = addresses[i];
-    
-    // Read WHO_AM_I register to verify sensor presence (should be 0x6A)
-    uint8_t whoAmI = readLSM6DSLRegister(LSM6DSL_WHO_AM_I);
-    
-    if (whoAmI == 0x6A) { // LSM6DSL's WHO_AM_I value is 0x6A
-      // Configure accelerometer:
-      // CTRL1_XL: ODR (Output Data Rate) and FS (Full Scale)
-      // ODR_XL[3:0] = 0110 (208 Hz) - good for responsiveness
-      // FS_XL[1:0] = 00 (+/-2g) - common and provides good resolution
-      writeLSM6DSLRegister(LSM6DSL_CTRL1_XL, 0x60); 
-
-      // CTRL3_C: Common control register
-      // BDU (Block Data Update) = 1 (0x40): Ensures data is updated only after all 6 bytes are read, preventing reading inconsistent data.
-      writeLSM6DSLRegister(LSM6DSL_CTRL3_C, 0x40); 
+    if (totalDelta > MOTION_THRESHOLD_LOW) {
+      if (!motionDetected) {
+        motionDetected = true;
+        motionStartTime = millis();
+        motionEventCount++;
+        digitalWrite(LED_PIN, HIGH);
+        
+        Serial.println("🚨 MOTION DETECTED!");
+        Serial.printf("Event #%d | Delta: %.3fg\n", motionEventCount, totalDelta);
+      }
       
-      delay(100); // Give sensor a moment to stabilize after configuration
-      return true; // Sensor initialized successfully
+      lastMotionTime = millis();
+      
+      // Update reference slowly
+      refX = refX * 0.98 + x * 0.02;
+      refY = refY * 0.98 + y * 0.02;
+      refZ = refZ * 0.98 + z * 0.02;
+      
+    } else {
+      if (motionDetected && (millis() - lastMotionTime > 1000)) {
+        unsigned long duration = (millis() - motionStartTime) / 1000;
+        Serial.printf("✅ Motion stopped (duration: %lu sec)\n\n", duration);
+        
+        motionDetected = false;
+        digitalWrite(LED_PIN, LOW);
+        
+        refX = x;
+        refY = y;
+        refZ = z;
+      }
+    }
+    
+    // Check for sleep
+    unsigned long noMotionTime = millis() - lastMotionTime;
+    if (!motionDetected && noMotionTime > NO_MOTION_SLEEP_TIME) {
+      Serial.println("\n💤 No motion for 10 seconds");
+      prepareForSleep();
+    } else if (!motionDetected && noMotionTime > 5000) {
+      int secondsToSleep = (NO_MOTION_SLEEP_TIME - noMotionTime) / 1000;
+      static int lastPrintedSecond = -1;
+      if (secondsToSleep != lastPrintedSecond && secondsToSleep > 0) {
+        Serial.printf("Sleep in %d seconds...\n", secondsToSleep);
+        lastPrintedSecond = secondsToSleep;
+      }
     }
   }
   
-  return false; // Sensor not found or WHO_AM_I mismatch
+  delay(50);
 }
 
-uint8_t readLSM6DSLRegister(uint8_t reg) {
-  Wire.beginTransmission(lsm6dsl_address); // Start I2C transmission to sensor address
-  Wire.write(reg);                         // Send register address to read from
-  uint8_t error = Wire.endTransmission(false); // End transmission, but keep connection active (send restart condition)
+void prepareForSleep() {
+  Serial.println("Preparing for deep sleep...");
   
-  if (error != 0) return 0xFF; // Return 0xFF (error) if transmission failed
+  // Configure LSM6DSL for wake-on-motion
+  Serial.println("Configuring sensor for wake-on-motion...");
   
-  Wire.requestFrom(lsm6dsl_address, (uint8_t)1); // Request 1 byte from the sensor
-  if (Wire.available() < 1) return 0xFF;       // Return 0xFF if no byte received
+  // Reset interrupt configuration
+  writeRegister(TAP_CFG, 0x00);
+  delay(10);
   
-  return Wire.read(); // Read and return the received byte
-}
-
-void writeLSM6DSLRegister(uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(lsm6dsl_address); // Start I2C transmission to sensor address
-  Wire.write(reg);                         // Send register address to write to
-  Wire.write(value);                       // Send the value to write
-  Wire.endTransmission();                  // End transmission (send stop condition)
+  // Configure accelerometer for low power mode but keep it running
+  writeRegister(CTRL1_XL, 0x30);  // 52Hz, ±2g, keep running
+  delay(10);
+  
+  // Configure wake-up detection
+  writeRegister(WAKE_UP_DUR, 0x00);  // No duration, immediate wake
+  writeRegister(WAKE_UP_THS, 0x02);  // Very sensitive threshold
+  delay(10);
+  
+  // Enable interrupts and latch mode
+  writeRegister(TAP_CFG, 0x80 | 0x01);  // Enable interrupts, latch mode
+  delay(10);
+  
+  // Route wake-up to both INT1 and INT2
+  writeRegister(MD1_CFG, 0x20);  // Wake-up on INT1
+  writeRegister(MD2_CFG, 0x20);  // Wake-up on INT2
+  delay(10);
+  
+  // Clear any pending interrupts
+  uint8_t wake_src = readRegister(WAKE_UP_SRC);
+  Serial.printf("Cleared wake source: 0x%02X\n", wake_src);
+  
+  // Verify interrupt configuration
+  uint8_t md1 = readRegister(MD1_CFG);
+  uint8_t md2 = readRegister(MD2_CFG);
+  uint8_t tap = readRegister(TAP_CFG);
+  Serial.printf("MD1_CFG: 0x%02X, MD2_CFG: 0x%02X, TAP_CFG: 0x%02X\n", md1, md2, tap);
+  
+  // Test if interrupts are working before sleep
+  Serial.println("Testing interrupts before sleep...");
+  Serial.println("Move sensor NOW to test:");
+  
+  unsigned long testStart = millis();
+  bool int1Triggered = false;
+  bool int2Triggered = false;
+  
+  while (millis() - testStart < 2000) {
+    if (digitalRead(INT1_PIN) == HIGH && !int1Triggered) {
+      Serial.println("✅ INT1 triggered!");
+      int1Triggered = true;
+    }
+    if (digitalRead(INT2_PIN) == HIGH && !int2Triggered) {
+      Serial.println("✅ INT2 triggered!");
+      int2Triggered = true;
+    }
+    if (int1Triggered || int2Triggered) break;
+    delay(10);
+  }
+  
+  if (!int1Triggered && !int2Triggered) {
+    Serial.println("⚠️ No interrupts detected - wake may not work!");
+  }
+  
+  // Clear interrupts again before sleep
+  wake_src = readRegister(WAKE_UP_SRC);
+  
+  // Final pin states
+  Serial.printf("Final INT1: %d, INT2: %d\n", 
+                digitalRead(INT1_PIN), digitalRead(INT2_PIN));
+  
+  digitalWrite(LED_PIN, LOW);
+  
+  // Configure ESP32 wake-up on multiple pins
+  uint64_t ext_wakeup_pin_mask = (1ULL << INT1_PIN) | (1ULL << INT2_PIN);
+  esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
+  
+  Serial.println("\n🛌 Entering deep sleep...");
+  Serial.println("Move sensor to wake ESP32!");
+  Serial.flush();
+  delay(100);
+  
+  // Enter deep sleep
+  esp_deep_sleep_start();
 }
 
 void scanI2C() {
-  Serial.println("Scanning I2C devices...");
-  int deviceCount = 0;
+  Serial.println("Scanning I2C bus...");
+  int count = 0;
   
-  // Iterate through all possible 7-bit I2C addresses
-  for (uint8_t address = 1; address < 127; address++) {
-    Wire.beginTransmission(address); // Begin transmission to current address
-    uint8_t error = Wire.endTransmission(); // End transmission to check for ACK from device
-    
-    if (error == 0) { // If error is 0, device acknowledged (found)
-      Serial.print("Found device at 0x");
-      if (address < 16) Serial.print("0"); // Add leading zero for single-digit hex
-      Serial.print(address, HEX); // Print address in hexadecimal
-      
-      // Identify known devices by their common I2C addresses
-      if (address == 0x6A) Serial.print(" (LSM6DSL)");
-      if (address == 0x6B) Serial.print(" (LSM6DSL Alt)");
-      
-      Serial.println(""); // New line for next device
-      deviceCount++; // Increment count of found devices
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("Found: 0x%02X", addr);
+      if (addr == 0x6A || addr == 0x6B) Serial.print(" (LSM6DSL)");
+      Serial.println();
+      count++;
     }
   }
   
-  if (deviceCount == 0) {
+  if (count == 0) {
     Serial.println("No I2C devices found!");
   } else {
-    Serial.print("Total devices found: ");
-    Serial.println(deviceCount);
+    Serial.printf("Total devices: %d\n\n", count);
   }
-  Serial.println(""); // Blank line for formatting
+}
+
+bool initLSM6DSL() {
+  // Try address 0x6A first
+  LSM6DSL_ADDR = LSM6DSL_ADDR1;
+  uint8_t whoami = readRegister(WHO_AM_I);
+  
+  if (whoami != 0x6A) {
+    // Try address 0x6B
+    LSM6DSL_ADDR = LSM6DSL_ADDR2;
+    whoami = readRegister(WHO_AM_I);
+    if (whoami != 0x6A) {
+      Serial.printf("WHO_AM_I failed: 0x%02X\n", whoami);
+      return false;
+    }
+  }
+  
+  Serial.printf("Found LSM6DSL at 0x%02X\n", LSM6DSL_ADDR);
+  
+  // Software reset
+  writeRegister(CTRL3_C, 0x01);
+  delay(100);
+  
+  // Configure accelerometer: 52Hz, ±2g, high performance
+  writeRegister(CTRL1_XL, 0x30);
+  delay(20);
+  
+  // Block data update
+  writeRegister(CTRL3_C, 0x44);
+  delay(20);
+  
+  // High performance mode
+  writeRegister(CTRL6_C, 0x00);
+  delay(20);
+  
+  // Verify configuration
+  uint8_t ctrl1 = readRegister(CTRL1_XL);
+  Serial.printf("CTRL1_XL: 0x%02X (expected 0x30)\n", ctrl1);
+  
+  return true;
+}
+
+void testInterrupts() {
+  Serial.println("\n=== INTERRUPT TEST ===");
+  Serial.println("Configuring interrupts...");
+  
+  // Configure wake-up interrupt
+  writeRegister(WAKE_UP_DUR, 0x00);
+  writeRegister(WAKE_UP_THS, 0x02);
+  writeRegister(TAP_CFG, 0x80);
+  writeRegister(MD1_CFG, 0x20);
+  writeRegister(MD2_CFG, 0x20);
+  delay(50);
+  
+  Serial.println("Move sensor to test interrupts (3 sec)...");
+  
+  unsigned long testStart = millis();
+  bool int1OK = false, int2OK = false;
+  
+  while (millis() - testStart < 3000) {
+    bool int1 = digitalRead(INT1_PIN);
+    bool int2 = digitalRead(INT2_PIN);
+    
+    if (int1 && !int1OK) {
+      Serial.println("✅ INT1 working!");
+      int1OK = true;
+    }
+    if (int2 && !int2OK) {
+      Serial.println("✅ INT2 working!");
+      int2OK = true;
+    }
+    
+    if (int1OK && int2OK) break;
+    delay(10);
+  }
+  
+  if (!int1OK && !int2OK) {
+    Serial.println("❌ No interrupts detected!");
+  } else if (!int1OK) {
+    Serial.println("⚠️ INT1 not working");
+  } else if (!int2OK) {
+    Serial.println("⚠️ INT2 not working");
+  }
+  
+  // Clear interrupts
+  readRegister(WAKE_UP_SRC);
+  Serial.println("===================\n");
+}
+
+bool readAccelerometer() {
+  uint8_t xlo = readRegister(OUTX_L_XL);
+  uint8_t xhi = readRegister(OUTX_L_XL + 1);
+  uint8_t ylo = readRegister(OUTY_L_XL);
+  uint8_t yhi = readRegister(OUTY_L_XL + 1);
+  uint8_t zlo = readRegister(OUTZ_L_XL);
+  uint8_t zhi = readRegister(OUTZ_L_XL + 1);
+  
+  if (xlo == 0xFF || xhi == 0xFF) return false;
+  
+  int16_t rawX = (xhi << 8) | xlo;
+  int16_t rawY = (yhi << 8) | ylo;
+  int16_t rawZ = (zhi << 8) | zlo;
+  
+  lastX = rawX / 16384.0;
+  lastY = rawY / 16384.0;
+  lastZ = rawZ / 16384.0;
+  
+  return true;
+}
+
+uint8_t readRegister(uint8_t reg) {
+  Wire.beginTransmission(LSM6DSL_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return 0xFF;
+  
+  Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+  if (Wire.available()) {
+    return Wire.read();
+  }
+  return 0xFF;
+}
+
+void writeRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(LSM6DSL_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+  delay(5);
 }
