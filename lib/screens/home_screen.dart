@@ -42,7 +42,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _isTrackingLocation = false;
   LocationData? _currentLocation;
   
-  // MCU GPS History
+  // Tracker GPS History
   List<Map<String, dynamic>> _mcuGpsHistory = [];
   bool _isLoadingMcuHistory = false;
   
@@ -788,7 +788,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   onPressed: _clearLocationHistory,
                                   tooltip: 'Clear Phone History',
                                 ),
-                              // Show refresh button when in MCU view
+                              // Show refresh button when in GPS view
                               if (_tabController.index == 2 && _bleService.isConnected)
                                 IconButton(
                                   icon: const Icon(Icons.refresh),
@@ -833,8 +833,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               text: 'Phone',
                             ),
                             Tab(
-                              icon: Icon(Icons.memory),
-                              text: 'MCU',
+                              icon: Icon(Icons.satellite_alt),
+                              text: 'GPS',
                             ),
                           ],
                         ),
@@ -995,7 +995,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         ),
                           ),
-                        // MCU GPS History View
+                        // Tracker GPS History View
                         Builder(
                           builder: (context) {
                             if (!_bleService.isConnected) {
@@ -1010,7 +1010,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     ),
                                     const SizedBox(height: 16),
                                     Text(
-                                      'Connect to device to view MCU GPS history',
+                                      'Connect to device to view tracker GPS history',
                                       style: theme.textTheme.bodyLarge?.copyWith(
                                         color: theme.colorScheme.onSurfaceVariant,
                                       ),
@@ -1090,13 +1090,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                       title: Row(
                                         children: [
                                           Icon(
-                                            Icons.memory,
+                                            Icons.satellite_alt,
                                             size: 16,
                                             color: theme.colorScheme.onSurfaceVariant,
                                           ),
                                           const SizedBox(width: 4),
                                           Text(
-                                            'MCU Point #${index + 1}',
+                                            'GPS Point #${index + 1}',
                                             style: theme.textTheme.bodyLarge?.copyWith(
                                               fontWeight: FontWeight.w500,
                                             ),
