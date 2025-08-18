@@ -80,14 +80,9 @@ uint64_t parseGPSDateTimeToUnixMillis(const String& datetime) {
  * Returns true when valid fix is obtained
  */
 bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
-  // Reset module before GPS operation for clean state
-  if (!resetModule()) {
-    Serial.println("⚠️ Module reset failed");
-  }
-  delay(2000);
-  
-  // Enable GPS if not already on
+  // Enable GPS (module should already be initialized)
   if (!enableGNSSPower()) {
+    Serial.println("❌ Failed to enable GPS");
     return false;
   }
   
