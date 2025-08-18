@@ -122,11 +122,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         if (history.isNotEmpty) {
           developer.log('First point: ${history.first}', name: 'HomeScreen');
         }
+        // Reverse the history so newest points are first
         setState(() {
-          _mcuGpsHistory = history;
+          _mcuGpsHistory = history.reversed.toList();
           _isLoadingMcuHistory = false;
         });
-        developer.log('State updated. _mcuGpsHistory now has ${_mcuGpsHistory.length} points', name: 'HomeScreen');
+        developer.log('State updated. _mcuGpsHistory now has ${_mcuGpsHistory.length} points (reversed for display)', name: 'HomeScreen');
       } else {
         developer.log('History is null or component not mounted', name: 'HomeScreen');
         setState(() {
@@ -180,10 +181,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _gpsHistorySubscription = _bleService.gpsHistoryStream.listen((history) {
       if (mounted) {
         setState(() {
-          _mcuGpsHistory = history;
+          // Reverse the history so newest points are first
+          _mcuGpsHistory = history.reversed.toList();
           _isLoadingMcuHistory = false;
         });
-        developer.log('GPS history updated via notification: ${history.length} points', name: 'HomeScreen');
+        developer.log('GPS history updated via notification: ${history.length} points (reversed for display)', name: 'HomeScreen');
       }
     });
     
