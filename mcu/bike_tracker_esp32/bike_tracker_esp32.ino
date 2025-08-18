@@ -12,7 +12,7 @@
 #include "sms_handler.h"
 
 // Pin Definitions
-#define IR_SENSOR_PIN 25   // HW-201 IR sensor input
+#define IR_SENSOR_PIN 15   // HW-201 IR sensor input
 
 // BLE Service and Characteristic Pointers
 BLEServer* pServer = NULL;
@@ -387,6 +387,18 @@ void setup() {
   initBLE();
   initGPSHistory();
   
+  // Load last known GPS location
+  if (loadGPSData(currentGPS)) {
+    Serial.println("📍 Loaded last GPS location:");
+    Serial.print("   Lat: ");
+    Serial.println(currentGPS.latitude);
+    Serial.print("   Lon: ");
+    Serial.println(currentGPS.longitude);
+  } else {
+    Serial.println("📍 No previous GPS data available");
+    currentGPS.valid = false;
+  }
+  
   // Initialize SIM7070G
   if (initializeSIM7070G()) {
     if (checkNetworkRegistration()) {
@@ -406,17 +418,77 @@ void setup() {
 // ============================================================================
 void loop() {
   static unsigned long lastStatusUpdate = 0;
+  static unsigned long lastDisconnectSMS = 0;
+  static bool disconnectSMSSent = false;
   
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
+    // BLE just disconnected
+    Serial.println("🔴 BLE Disconnected - Starting SMS notification system");
     delay(500);
     pServer->startAdvertising();
     oldDeviceConnected = deviceConnected;
+    disconnectSMSSent = false;  // Reset flag for new disconnection
+    lastDisconnectSMS = 0;  // Reset timer
   }
   
   if (deviceConnected && !oldDeviceConnected) {
+    // BLE just connected
+    Serial.println("🟢 BLE Connected - Stopping SMS notifications");
     oldDeviceConnected = deviceConnected;
+    disconnectSMSSent = false;  // Reset flag when reconnected
     updateStatusCharacteristic();
+  }
+  
+  // Send SMS when BLE is disconnected (no theft logic, just disconnection)
+  if (!deviceConnected && strlen(config.phoneNumber) > 0 && config.alertEnabled) {
+    unsigned long currentTime = millis();
+    unsigned long intervalMillis = config.updateInterval * 1000;
+    
+    // Send first SMS immediately on disconnect, then at configured intervals
+    if (!disconnectSMSSent || (currentTime - lastDisconnectSMS >= intervalMillis)) {
+      Serial.println("\n📱 BLE Disconnected - Sending location SMS...");
+      
+      // Try to get current GPS location
+      bool gpsAcquired = false;
+      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {  // If no GPS or older than 5 minutes
+        Serial.println("🛰️ Acquiring fresh GPS fix...");
+        gpsAcquired = acquireGPSFix(currentGPS, 30);  // Try for 30 seconds
+        if (gpsAcquired) {
+          status.lastGPSTime = currentTime;
+          saveGPSData(currentGPS);
+          logGPSPoint(currentGPS, 2);  // Type 2 for disconnect event
+        }
+      } else {
+        Serial.println("📍 Using cached GPS location");
+        gpsAcquired = true;
+      }
+      
+      // Send SMS with location (current or last known)
+      if (gpsAcquired || currentGPS.valid) {
+        if (sendLocationSMS(config.phoneNumber, currentGPS, ALERT_LOCATION_UPDATE)) {
+          Serial.println("✅ Location SMS sent successfully!");
+          disconnectSMSSent = true;
+          lastDisconnectSMS = currentTime;
+        } else {
+          Serial.println("❌ Failed to send location SMS");
+        }
+      } else {
+        // No GPS available, send simple notification
+        String message = "⚠️ Bike Tracker Alert\n\n";
+        message += "BLE Connection Lost\n";
+        message += "GPS location unavailable\n";
+        message += "Last known location may be outdated";
+        
+        if (sendSMS(config.phoneNumber, message)) {
+          Serial.println("✅ Alert SMS sent (no GPS)");
+          disconnectSMSSent = true;
+          lastDisconnectSMS = currentTime;
+        } else {
+          Serial.println("❌ Failed to send alert SMS");
+        }
+      }
+    }
   }
   
   // Read sensors
