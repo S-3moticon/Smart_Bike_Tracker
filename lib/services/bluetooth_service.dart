@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -34,6 +35,11 @@ class BikeBluetoothService {
   StreamSubscription? _statusSubscription;
   final _deviceStatusController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get deviceStatus => _deviceStatusController.stream;
+  
+  // GPS History updates stream
+  StreamSubscription? _historySubscription;
+  final _gpsHistoryController = StreamController<List<Map<String, dynamic>>>.broadcast();
+  Stream<List<Map<String, dynamic>>> get gpsHistoryStream => _gpsHistoryController.stream;
   
   // Bluetooth adapter state monitoring
   StreamSubscription? _adapterStateSubscription;
@@ -324,30 +330,116 @@ class BikeBluetoothService {
         return null;
       }
       
-      developer.log('Reading GPS history from device...', name: 'BLE-GPSHistory');
+      developer.log('Reading GPS history from device: ${_connectedDevice!.platformName}', name: 'BLE-GPSHistory');
       
-      // Find the bike tracker service
-      final services = await _connectedDevice!.discoverServices();
+      // Find the bike tracker service - with timeout handling
+      List<BluetoothService> services;
+      try {
+        developer.log('Starting service discovery...', name: 'BLE-GPSHistory');
+        services = await _connectedDevice!.discoverServices().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            developer.log('Service discovery timed out', name: 'BLE-GPSHistory');
+            throw TimeoutException('Service discovery timed out');
+          },
+        );
+        developer.log('Service discovery completed. Found ${services.length} services', name: 'BLE-GPSHistory');
+      } catch (e) {
+        developer.log('Error during service discovery: $e', name: 'BLE-GPSHistory');
+        return null;
+      }
       
       for (BluetoothService service in services) {
-        if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
+        developer.log('Checking service: ${service.uuid}', name: 'BLE-GPSHistory');
+        
+        // Handle both short UUID (1234) and full UUID formats
+        String serviceUuid = service.uuid.toString().toLowerCase();
+        String targetUuid = AppConstants.serviceUuid.toLowerCase();
+        
+        // Check if it's the short form (1234) or full form match
+        bool isMatch = serviceUuid == targetUuid || 
+                      serviceUuid == '1234' || 
+                      serviceUuid == '00001234' ||
+                      serviceUuid.contains('1234-0000-1000');
+        
+        if (isMatch) {
+          developer.log('Found bike tracker service with ${service.characteristics.length} characteristics', name: 'BLE-GPSHistory');
+          
           // Find history characteristic
           for (BluetoothCharacteristic characteristic in service.characteristics) {
-            if (characteristic.uuid.toString().toLowerCase() == AppConstants.historyCharUuid.toLowerCase()) {
-              // Read the GPS history
-              List<int> value = await characteristic.read();
-              String jsonString = String.fromCharCodes(value);
+            developer.log('Checking characteristic: ${characteristic.uuid}', name: 'BLE-GPSHistory');
+            
+            // Handle both short UUID (1239) and full UUID formats for history characteristic
+            String charUuid = characteristic.uuid.toString().toLowerCase();
+            String targetHistoryUuid = AppConstants.historyCharUuid.toLowerCase();
+            
+            bool isHistoryChar = charUuid == targetHistoryUuid || 
+                                charUuid == '1239' || 
+                                charUuid == '00001239' ||
+                                charUuid.contains('1239-0000-1000');
+            
+            if (isHistoryChar) {
+              developer.log('Found history characteristic! Properties: read=${characteristic.properties.read}, notify=${characteristic.properties.notify}', name: 'BLE-GPSHistory');
               
-              developer.log('GPS history received: $jsonString', name: 'BLE-GPSHistory');
+              // Skip notifications for now - just read the value
+              // Notifications were causing timeout issues
               
-              // Parse the JSON array
-              return _parseGPSHistory(jsonString);
+              if (!characteristic.properties.read) {
+                developer.log('History characteristic does not support read!', name: 'BLE-GPSHistory');
+                return null;
+              }
+              
+              // Read the current GPS history
+              try {
+                developer.log('Reading characteristic value...', name: 'BLE-GPSHistory');
+                List<int> value = await characteristic.read().timeout(
+                  const Duration(seconds: 5),
+                  onTimeout: () {
+                    developer.log('Characteristic read timed out', name: 'BLE-GPSHistory');
+                    throw TimeoutException('Characteristic read timed out');
+                  },
+                );
+                developer.log('Read ${value.length} bytes from characteristic', name: 'BLE-GPSHistory');
+                
+                if (value.isEmpty) {
+                  developer.log('Characteristic returned empty data', name: 'BLE-GPSHistory');
+                  return [];
+                }
+                
+                String jsonString = String.fromCharCodes(value);
+                developer.log('GPS history raw data (${jsonString.length} chars): $jsonString', name: 'BLE-GPSHistory');
+                
+                // Parse the JSON array
+                final history = _parseGPSHistory(jsonString);
+                
+                if (history != null) {
+                  developer.log('Successfully parsed ${history.length} GPS points', name: 'BLE-GPSHistory');
+                  // Send to stream for UI updates
+                  _gpsHistoryController.add(history);
+                } else {
+                  developer.log('Failed to parse GPS history data', name: 'BLE-GPSHistory');
+                }
+                
+                return history;
+              } catch (e) {
+                developer.log('Error reading characteristic: $e', name: 'BLE-GPSHistory');
+                return null;
+              }
             }
+          }
+          developer.log('History characteristic not found. Looking for: ${AppConstants.historyCharUuid} or 1239', name: 'BLE-GPSHistory');
+          developer.log('Available characteristics in service:', name: 'BLE-GPSHistory');
+          for (var char in service.characteristics) {
+            developer.log('  - ${char.uuid} (read: ${char.properties.read}, notify: ${char.properties.notify})', name: 'BLE-GPSHistory');
           }
         }
       }
       
-      developer.log('GPS history characteristic not found', name: 'BLE-GPSHistory');
+      developer.log('Bike tracker service not found. Looking for: ${AppConstants.serviceUuid} or 1234', name: 'BLE-GPSHistory');
+      developer.log('Available services:', name: 'BLE-GPSHistory');
+      for (var svc in services) {
+        developer.log('  - ${svc.uuid} (${svc.characteristics.length} characteristics)', name: 'BLE-GPSHistory');
+      }
       return null;
     } catch (e) {
       developer.log('Error reading GPS history: $e', name: 'BLE-GPSHistory', error: e);
@@ -357,63 +449,121 @@ class BikeBluetoothService {
   
   List<Map<String, dynamic>>? _parseGPSHistory(String jsonString) {
     try {
-      // The MCU sends GPS history as a JSON array
-      // Format: [{"lat":"...","lon":"...","time":...}, ...]
+      developer.log('Parsing GPS history JSON (${jsonString.length} chars)...', name: 'BLE-GPSHistory');
+      
+      // Check if the string is empty or just whitespace
+      if (jsonString.trim().isEmpty) {
+        developer.log('Received empty JSON string', name: 'BLE-GPSHistory');
+        return [];
+      }
+      
+      // Log first 200 chars to see what we're getting
+      developer.log('First 200 chars of JSON: ${jsonString.substring(0, jsonString.length > 200 ? 200 : jsonString.length)}', name: 'BLE-GPSHistory');
+      
+      // The MCU sends GPS history as a JSON object with format:
+      // {"history":[{"lat":123.456,"lon":78.910,"time":12345,"src":1}],"count":18}
+      
+      // Use proper JSON decoding
+      final dynamic decodedData = json.decode(jsonString);
+      developer.log('JSON decoded successfully. Type: ${decodedData.runtimeType}', name: 'BLE-GPSHistory');
+      
+      if (decodedData is! Map<String, dynamic>) {
+        developer.log('Decoded data is not a Map, it is: ${decodedData.runtimeType}', name: 'BLE-GPSHistory');
+        return [];
+      }
+      
+      final Map<String, dynamic> jsonData = decodedData;
+      developer.log('JSON keys: ${jsonData.keys.toList()}', name: 'BLE-GPSHistory');
+      
+      // Extract the history array
+      if (!jsonData.containsKey('history')) {
+        developer.log('No history key found in GPS data. Available keys: ${jsonData.keys}', name: 'BLE-GPSHistory');
+        return [];
+      }
+      
+      final dynamic historyData = jsonData['history'];
+      developer.log('History data type: ${historyData.runtimeType}', name: 'BLE-GPSHistory');
+      
+      if (historyData is! List) {
+        developer.log('History data is not a List', name: 'BLE-GPSHistory');
+        return [];
+      }
+      
+      final List<dynamic> historyArray = historyData;
+      developer.log('History array has ${historyArray.length} items', name: 'BLE-GPSHistory');
+      
       List<Map<String, dynamic>> history = [];
       
-      // Remove outer brackets and split by objects
-      jsonString = jsonString.trim();
-      if (jsonString.startsWith('[')) {
-        jsonString = jsonString.substring(1);
-      }
-      if (jsonString.endsWith(']')) {
-        jsonString = jsonString.substring(0, jsonString.length - 1);
+      for (var i = 0; i < historyArray.length; i++) {
+        var point = historyArray[i];
+        developer.log('Processing point $i: $point', name: 'BLE-GPSHistory');
+        
+        if (point is Map<String, dynamic>) {
+          Map<String, dynamic> gpsPoint = {};
+          
+          // Extract latitude (numeric value from MCU)
+          if (point.containsKey('lat')) {
+            final lat = point['lat'];
+            developer.log('  lat value: $lat (type: ${lat.runtimeType})', name: 'BLE-GPSHistory');
+            if (lat is num) {
+              gpsPoint['latitude'] = lat.toDouble();
+            } else if (lat is String) {
+              gpsPoint['latitude'] = double.tryParse(lat) ?? 0.0;
+            }
+          }
+          
+          // Extract longitude (numeric value from MCU)
+          if (point.containsKey('lon')) {
+            final lon = point['lon'];
+            developer.log('  lon value: $lon (type: ${lon.runtimeType})', name: 'BLE-GPSHistory');
+            if (lon is num) {
+              gpsPoint['longitude'] = lon.toDouble();
+            } else if (lon is String) {
+              gpsPoint['longitude'] = double.tryParse(lon) ?? 0.0;
+            }
+          }
+          
+          // Extract timestamp
+          if (point.containsKey('time')) {
+            final time = point['time'];
+            developer.log('  time value: $time (type: ${time.runtimeType})', name: 'BLE-GPSHistory');
+            if (time is num) {
+              gpsPoint['timestamp'] = time.toInt();
+            } else if (time is String) {
+              gpsPoint['timestamp'] = int.tryParse(time) ?? 0;
+            }
+          }
+          
+          // Extract source (0=Phone, 1=SIM7070G)
+          if (point.containsKey('src')) {
+            final src = point['src'];
+            if (src is num) {
+              gpsPoint['source'] = src.toInt();
+            }
+          }
+          
+          developer.log('  Parsed point: $gpsPoint', name: 'BLE-GPSHistory');
+          
+          // Only add valid points with both coordinates
+          if (gpsPoint.containsKey('latitude') && 
+              gpsPoint.containsKey('longitude') &&
+              gpsPoint['latitude'] != 0.0 && 
+              gpsPoint['longitude'] != 0.0) {
+            history.add(gpsPoint);
+            developer.log('  Point added to history', name: 'BLE-GPSHistory');
+          } else {
+            developer.log('  Point skipped (missing or zero coordinates)', name: 'BLE-GPSHistory');
+          }
+        }
       }
       
-      // Split by }, { to get individual objects
-      List<String> points = jsonString.split('},');
-      
-      for (String point in points) {
-        // Clean up the point string
-        point = point.trim();
-        if (!point.startsWith('{')) {
-          point = '{$point';
-        }
-        if (!point.endsWith('}')) {
-          point = '$point}';
-        }
-        
-        // Parse individual GPS point
-        Map<String, dynamic> gpsPoint = {};
-        
-        // Extract latitude
-        final latMatch = RegExp(r'"lat":"([^"]*)"').firstMatch(point);
-        if (latMatch != null) {
-          gpsPoint['latitude'] = double.tryParse(latMatch.group(1) ?? '0') ?? 0.0;
-        }
-        
-        // Extract longitude
-        final lonMatch = RegExp(r'"lon":"([^"]*)"').firstMatch(point);
-        if (lonMatch != null) {
-          gpsPoint['longitude'] = double.tryParse(lonMatch.group(1) ?? '0') ?? 0.0;
-        }
-        
-        // Extract timestamp
-        final timeMatch = RegExp(r'"time":(\d+)').firstMatch(point);
-        if (timeMatch != null) {
-          gpsPoint['timestamp'] = int.tryParse(timeMatch.group(1) ?? '0') ?? 0;
-        }
-        
-        // Only add valid points
-        if (gpsPoint.containsKey('latitude') && gpsPoint.containsKey('longitude')) {
-          history.add(gpsPoint);
-        }
-      }
-      
-      developer.log('Parsed ${history.length} GPS points from history', name: 'BLE-GPSHistory');
+      final count = jsonData['count'] ?? history.length;
+      developer.log('Successfully parsed ${history.length} GPS points from history (MCU reports $count total)', name: 'BLE-GPSHistory');
       return history;
-    } catch (e) {
+    } catch (e, stack) {
       developer.log('Error parsing GPS history: $e', name: 'BLE-GPSHistory', error: e);
+      developer.log('Stack trace: $stack', name: 'BLE-GPSHistory');
+      developer.log('Raw JSON that failed: $jsonString', name: 'BLE-GPSHistory');
       return null;
     }
   }
@@ -843,10 +993,12 @@ class BikeBluetoothService {
     _connectionSubscription?.cancel();
     _adapterStateSubscription?.cancel();
     _statusSubscription?.cancel();
+    _historySubscription?.cancel();
     _scanResultsController.close();
     _connectionStateController.close();
     _bluetoothStateController.close();
     _deviceStatusController.close();
+    _gpsHistoryController.close();
   }
   
   BluetoothDevice? get connectedDevice => _connectedDevice;

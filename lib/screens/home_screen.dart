@@ -53,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   StreamSubscription? _scanSubscription;
   StreamSubscription? _locationSubscription;
   StreamSubscription? _bluetoothStateSubscription;
+  StreamSubscription? _gpsHistorySubscription;
   
   BluetoothAdapterState _bluetoothState = BluetoothAdapterState.unknown;
   
@@ -95,7 +96,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   Future<void> _fetchMcuGpsHistory() async {
+    developer.log('_fetchMcuGpsHistory called. Connection state: $_connectionState', name: 'HomeScreen');
+    
     if (_connectionState != BluetoothConnectionState.connected) {
+      developer.log('Not connected, skipping GPS history fetch', name: 'HomeScreen');
       return;
     }
     
@@ -103,22 +107,36 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _isLoadingMcuHistory = true;
     });
     
+    // Add delay to allow MCU to prepare data after connection
+    developer.log('Waiting 2 seconds for MCU to prepare data...', name: 'HomeScreen');
+    await Future.delayed(const Duration(seconds: 2));
+    
     try {
+      developer.log('Calling readGPSHistory...', name: 'HomeScreen');
       final history = await _bleService.readGPSHistory();
+      
+      developer.log('readGPSHistory returned: ${history?.length ?? "null"} points', name: 'HomeScreen');
+      
       if (mounted && history != null) {
+        developer.log('Setting MCU GPS history with ${history.length} points', name: 'HomeScreen');
+        if (history.isNotEmpty) {
+          developer.log('First point: ${history.first}', name: 'HomeScreen');
+        }
         setState(() {
           _mcuGpsHistory = history;
           _isLoadingMcuHistory = false;
         });
-        developer.log('Fetched ${history.length} GPS points from MCU', name: 'HomeScreen');
+        developer.log('State updated. _mcuGpsHistory now has ${_mcuGpsHistory.length} points', name: 'HomeScreen');
       } else {
+        developer.log('History is null or component not mounted', name: 'HomeScreen');
         setState(() {
           _mcuGpsHistory = [];
           _isLoadingMcuHistory = false;
         });
       }
-    } catch (e) {
-      developer.log('Error fetching MCU GPS history: $e', name: 'HomeScreen');
+    } catch (e, stack) {
+      developer.log('Error fetching MCU GPS history: $e', name: 'HomeScreen', error: e);
+      developer.log('Stack trace: $stack', name: 'HomeScreen');
       if (mounted) {
         setState(() {
           _isLoadingMcuHistory = false;
@@ -156,6 +174,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _availableDevices = devices.where((d) => d.isBikeTracker).toList();
       });
+    });
+    
+    // Subscribe to GPS history stream for real-time updates
+    _gpsHistorySubscription = _bleService.gpsHistoryStream.listen((history) {
+      if (mounted) {
+        setState(() {
+          _mcuGpsHistory = history;
+          _isLoadingMcuHistory = false;
+        });
+        developer.log('GPS history updated via notification: ${history.length} points', name: 'HomeScreen');
+      }
     });
     
     // Listen to Bluetooth adapter state changes
@@ -1027,8 +1056,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 itemBuilder: (context, index) {
                                   final point = _mcuGpsHistory[index];
                                   final timestamp = point['timestamp'] ?? 0;
+                                  // MCU sends timestamp in milliseconds already
                                   final date = timestamp > 0 
-                                    ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
+                                    ? DateTime.fromMillisecondsSinceEpoch(timestamp)
                                     : DateTime.now();
                                   
                                   return Card(
@@ -1222,6 +1252,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _scanSubscription?.cancel();
     _locationSubscription?.cancel();
     _bluetoothStateSubscription?.cancel();
+    _gpsHistorySubscription?.cancel();
     _locationService.dispose();
     super.dispose();
   }
