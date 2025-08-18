@@ -69,6 +69,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Phone number history
   List<String> _phoneNumberHistory = [];
   
+  // Validation
+  String? _phoneNumberError;
+  
   @override
   void initState() {
     super.initState();
@@ -120,13 +123,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveSettings() async {
     if (!_formKey.currentState!.validate()) return;
     
+    // Validate phone number before saving
+    final phoneText = _phoneController.text.trim();
+    if (phoneText.isNotEmpty && !_validatePhoneNumber(phoneText)) {
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_phoneNumberError ?? 'Invalid phone number'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+    
     setState(() {
       _isSaving = true;
     });
     
     try {
       // Combine country code with phone number
-      final phoneNumber = _selectedCountryCode + _phoneController.text.trim();
+      final phoneNumber = phoneText.isNotEmpty 
+        ? _selectedCountryCode + phoneText
+        : '';
       final updateInterval = int.tryParse(_intervalController.text) ?? 300;
       
       // Save to SharedPreferences
@@ -315,6 +335,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() {
           _selectedCountryCode = country['code']!;
           _phoneController.text = phoneNumber.substring(country['code']!.length).trim();
+          _validatePhoneNumber(_phoneController.text);
         });
         return;
       }
@@ -322,7 +343,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // If no country code matched, set the whole number
     setState(() {
       _phoneController.text = phoneNumber;
+      _validatePhoneNumber(_phoneController.text);
     });
+  }
+  
+  // Validate phone number based on country code
+  bool _validatePhoneNumber(String phoneNumber) {
+    if (phoneNumber.isEmpty) {
+      setState(() {
+        _phoneNumberError = null;
+      });
+      return true; // Empty is valid (user clearing the field)
+    }
+    
+    // Remove any non-digit characters for validation
+    String digitsOnly = phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+    
+    // Define validation rules for each country
+    Map<String, Map<String, dynamic>> validationRules = {
+      '+1': {'minLength': 10, 'maxLength': 10, 'name': 'US/Canada'}, // US/Canada
+      '+44': {'minLength': 10, 'maxLength': 11, 'name': 'UK'}, // UK
+      '+91': {'minLength': 10, 'maxLength': 10, 'name': 'India'}, // India
+      '+86': {'minLength': 11, 'maxLength': 11, 'name': 'China'}, // China
+      '+81': {'minLength': 10, 'maxLength': 11, 'name': 'Japan'}, // Japan
+      '+82': {'minLength': 9, 'maxLength': 11, 'name': 'South Korea'}, // South Korea
+      '+49': {'minLength': 10, 'maxLength': 12, 'name': 'Germany'}, // Germany
+      '+33': {'minLength': 9, 'maxLength': 9, 'name': 'France'}, // France
+      '+39': {'minLength': 9, 'maxLength': 11, 'name': 'Italy'}, // Italy
+      '+34': {'minLength': 9, 'maxLength': 9, 'name': 'Spain'}, // Spain
+      '+61': {'minLength': 9, 'maxLength': 9, 'name': 'Australia'}, // Australia
+      '+55': {'minLength': 10, 'maxLength': 11, 'name': 'Brazil'}, // Brazil
+      '+52': {'minLength': 10, 'maxLength': 10, 'name': 'Mexico'}, // Mexico
+      '+7': {'minLength': 10, 'maxLength': 10, 'name': 'Russia'}, // Russia
+      '+31': {'minLength': 9, 'maxLength': 9, 'name': 'Netherlands'}, // Netherlands
+      '+46': {'minLength': 7, 'maxLength': 13, 'name': 'Sweden'}, // Sweden
+      '+47': {'minLength': 8, 'maxLength': 8, 'name': 'Norway'}, // Norway
+      '+45': {'minLength': 8, 'maxLength': 8, 'name': 'Denmark'}, // Denmark
+      '+358': {'minLength': 6, 'maxLength': 12, 'name': 'Finland'}, // Finland
+      '+48': {'minLength': 9, 'maxLength': 9, 'name': 'Poland'}, // Poland
+      '+90': {'minLength': 10, 'maxLength': 10, 'name': 'Turkey'}, // Turkey
+      '+971': {'minLength': 8, 'maxLength': 9, 'name': 'UAE'}, // UAE
+      '+966': {'minLength': 9, 'maxLength': 9, 'name': 'Saudi Arabia'}, // Saudi Arabia
+      '+65': {'minLength': 8, 'maxLength': 8, 'name': 'Singapore'}, // Singapore
+      '+60': {'minLength': 7, 'maxLength': 10, 'name': 'Malaysia'}, // Malaysia
+      '+62': {'minLength': 8, 'maxLength': 13, 'name': 'Indonesia'}, // Indonesia
+      '+63': {'minLength': 10, 'maxLength': 10, 'name': 'Philippines'}, // Philippines
+      '+66': {'minLength': 9, 'maxLength': 9, 'name': 'Thailand'}, // Thailand
+      '+84': {'minLength': 9, 'maxLength': 10, 'name': 'Vietnam'}, // Vietnam
+      '+27': {'minLength': 9, 'maxLength': 9, 'name': 'South Africa'}, // South Africa
+      '+234': {'minLength': 10, 'maxLength': 10, 'name': 'Nigeria'}, // Nigeria
+      '+254': {'minLength': 9, 'maxLength': 9, 'name': 'Kenya'}, // Kenya
+      '+20': {'minLength': 10, 'maxLength': 10, 'name': 'Egypt'}, // Egypt
+      '+212': {'minLength': 9, 'maxLength': 9, 'name': 'Morocco'}, // Morocco
+    };
+    
+    // Get validation rule for selected country
+    var rule = validationRules[_selectedCountryCode];
+    if (rule == null) {
+      // Default validation for unknown countries
+      if (digitsOnly.length < 4 || digitsOnly.length > 15) {
+        setState(() {
+          _phoneNumberError = 'Phone number should be between 4 and 15 digits';
+        });
+        return false;
+      }
+    } else {
+      // Validate based on country-specific rules
+      if (digitsOnly.length < rule['minLength']) {
+        setState(() {
+          _phoneNumberError = '${rule['name']} phone numbers should have at least ${rule['minLength']} digits';
+        });
+        return false;
+      }
+      if (digitsOnly.length > rule['maxLength']) {
+        setState(() {
+          _phoneNumberError = '${rule['name']} phone numbers should have at most ${rule['maxLength']} digits';
+        });
+        return false;
+      }
+    }
+    
+    // Additional validation: check if it starts with 0 for some countries
+    if (_selectedCountryCode == '+44' && !digitsOnly.startsWith('0') && digitsOnly.length == 11) {
+      setState(() {
+        _phoneNumberError = 'UK mobile numbers typically start with 0';
+      });
+      return false;
+    }
+    
+    setState(() {
+      _phoneNumberError = null;
+    });
+    return true;
   }
   
   @override
@@ -399,6 +511,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               onChanged: (value) {
                                 setState(() {
                                   _selectedCountryCode = value!;
+                                  // Revalidate phone number when country changes
+                                  _validatePhoneNumber(_phoneController.text);
                                 });
                               },
                             ),
@@ -408,12 +522,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Expanded(
                             child: TextFormField(
                               controller: _phoneController,
+                              onChanged: (value) {
+                                _validatePhoneNumber(value);
+                              },
                               decoration: InputDecoration(
                                 labelText: 'Phone Number',
                                 hintText: '1234567890',
                                 prefixIcon: const Icon(Icons.phone),
                                 border: const OutlineInputBorder(),
-                                helperText: 'Enter number without country code',
+                                helperText: _phoneNumberError == null 
+                                  ? 'Enter number without country code'
+                                  : null,
+                                errorText: _phoneNumberError,
                                 suffixIcon: _phoneNumberHistory.isNotEmpty
                                   ? PopupMenuButton<String>(
                                       icon: const Icon(Icons.history),
