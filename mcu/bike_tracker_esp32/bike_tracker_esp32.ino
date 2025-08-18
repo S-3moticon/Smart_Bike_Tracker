@@ -466,7 +466,7 @@ void loop() {
       
       // Send SMS with location (current or last known)
       if (gpsAcquired || currentGPS.valid) {
-        if (sendLocationSMS(config.phoneNumber, currentGPS, ALERT_LOCATION_UPDATE)) {
+        if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
           Serial.println("✅ Location SMS sent successfully!");
           disconnectSMSSent = true;
           lastDisconnectSMS = currentTime;
@@ -475,10 +475,16 @@ void loop() {
         }
       } else {
         // No GPS available, send simple notification
-        String message = "⚠️ Bike Tracker Alert\n\n";
-        message += "BLE Connection Lost\n";
+        String message = "Bike Tracker Alert\n\n";
         message += "GPS location unavailable\n";
-        message += "Last known location may be outdated";
+        message += "Last known location may be outdated\n\n";
+        message += "Device Status\n";
+        message += "User: ";
+        message += status.userPresent ? "Present" : "Away";
+        message += "\n";
+        message += "SMS Interval: ";
+        message += String(config.updateInterval);
+        message += " seconds";
         
         if (sendSMS(config.phoneNumber, message)) {
           Serial.println("✅ Alert SMS sent (no GPS)");

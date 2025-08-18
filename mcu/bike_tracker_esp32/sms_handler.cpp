@@ -198,12 +198,16 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
     return false;
   }
   
-  // Send second message immediately without any status checks
-  delay(1000);  // Small delay between messages
+  // Send second message with proper delay
+  delay(3000);  // Increased delay between messages for module recovery
   Serial.println("📱 Sending second SMS (instructions)...");
   
   // Clear buffer and send second message
   clearSerialBuffer();
+  
+  // Re-set text mode in case it was lost
+  sendATCommand("AT+CMGF=1", "OK");
+  delay(500);
   
   cmd = "AT+CMGS=\"" + phoneNumber + "\"";
   simSerial.print(cmd);
@@ -299,9 +303,49 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
     case ALERT_LOW_BATTERY:
       secondMessage += "\nLow Battery Alert";
       break;
+    case ALERT_BLE_DISCONNECT:
+      secondMessage += "\nBLE Disconnected Alert";
+      break;
     default:
       break;
   }
+  
+  // Use the optimized SMS pair function
+  return sendSMSPair(phoneNumber, firstMessage, secondMessage);
+}
+
+/*
+ * Send BLE disconnect SMS with device status
+ * Includes GPS location, user presence, and SMS interval
+ */
+bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool userPresent, uint16_t updateInterval) {
+  if (!gpsData.valid) {
+    Serial.println("⚠️ Invalid GPS data, cannot send location SMS");
+    return false;
+  }
+  
+  // CRITICAL: Disable GPS before SMS (SIM7070G shares RF pins between GPS and LTE)
+  Serial.println("🛰️ Disabling GPS for SMS operation...");
+  disableGNSSPower();
+  delay(5000);  // Wait for GPS to fully power down
+  
+  // First message: geo URI only
+  String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
+  
+  // Second message: simplified format without special characters
+  String secondMessage = "If map did not load, copy coordinates to your map app\n";
+  secondMessage += "Location: ";
+  secondMessage += gpsData.latitude;
+  secondMessage += ",";
+  secondMessage += gpsData.longitude;
+  secondMessage += "\n\n";
+  secondMessage += "Device Status\n";
+  secondMessage += "User: ";
+  secondMessage += userPresent ? "Present" : "Away";
+  secondMessage += "\n";
+  secondMessage += "SMS Interval: ";
+  secondMessage += String(updateInterval);
+  secondMessage += " sec";
   
   // Use the optimized SMS pair function
   return sendSMSPair(phoneNumber, firstMessage, secondMessage);
@@ -312,7 +356,7 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
  */
 bool sendTestSMS(const String& phoneNumber) {
   String message = "Bike Tracker Test SMS\n";
-  message += "System operational ✓\n";
+  message += "System operational\n";
   message += "Time: ";
   message += String(millis() / 1000);
   message += " seconds since boot";
@@ -336,19 +380,23 @@ String formatAlertMessage(const GPSData& gpsData, AlertType type) {
   // Add alert header based on type
   switch (type) {
     case ALERT_LOCATION_UPDATE:
-      message += "📍 Location Update\n";
+      message += "Location Update\n";
       break;
       
     case ALERT_LOW_BATTERY:
-      message += "🔋 Low Battery Alert\n";
+      message += "Low Battery Alert\n";
       break;
       
     case ALERT_TEST:
-      message += "✅ Test Alert\n";
+      message += "Test Alert\n";
+      break;
+      
+    case ALERT_BLE_DISCONNECT:
+      message += "BLE Disconnected Alert\n";
       break;
       
     default:
-      message += "📍 Location Alert\n";
+      message += "Location Alert\n";
       break;
   }
   
@@ -378,7 +426,7 @@ String formatSimpleLocationMessage(const GPSData& gpsData) {
   message += gpsData.longitude;
   message += "\n\n";
   
-  message += "📍 Bike Location\n\n";
+  message += "Bike Location\n\n";
   
   message += "Coordinates:\n";
   message += "Lat: ";
