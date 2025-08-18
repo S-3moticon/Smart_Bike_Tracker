@@ -53,7 +53,7 @@ I want to build a simple Bike Anti Theft tracking app connected to a Micro Contr
  1. Normal Operation [BLE = T | IR = T | Motion = T]
  2. IDLE  [BLE = T | IR = T | Motion = F]
  3. IDLE [BLE = T | IR = F | Motion = F]
- 4. Device is Off [[BLE = F | IR = F | Motion = F]
+ 4. Device is Off [BLE = F | IR = F | Motion = F]
  5. Shock/Theft [BLE = F | IR = F | Motion = T]
  6. Theft [BLE = F | IR = T | Motion = T]
  7. Theft [BLE = F | IR = T | Motion = F]
