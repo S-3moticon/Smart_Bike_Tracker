@@ -536,103 +536,114 @@ void loop() {
   static unsigned long lastStatusUpdate = 0;
   static unsigned long lastSleepCheck = 0;
   
-  // Handle timer wake with reconnection window
-  static bool timerWakeHandled = false;
-  static unsigned long reconnectWindowStart = 0;
-  const unsigned long RECONNECT_WINDOW = 30000; // 30 seconds for reconnection
+  // Handle timer wake - monitor BLE continuously, no window limit
+  static bool timerSMSSent = false;  // Track if SMS was sent this timer wake
+  static unsigned long timerWakeStart = 0;
   
   // Timer wake requires handling (isTimerWake is preserved across deep sleep)
-  if (isTimerWake && !timerWakeHandled) {
-    // Start reconnection window on first loop after timer wake
-    reconnectWindowStart = millis();
-    timerWakeHandled = true;
-    Serial.println("\n⏰ Timer wake - 30 second window for BLE reconnection");
-    Serial.println("📱 SMS will be sent if no reconnection occurs");
-    
-    // Ensure disconnectSMSSent is true for timer wake (it should be preserved)
-    if (!disconnectSMSSent) {
-      Serial.println("⚠️ Timer wake but disconnectSMSSent is false - fixing state");
-      disconnectSMSSent = true;  // Fix the state
-    }
-  }
-  
-  // Check if we're in the reconnection window after timer wake
-  if (timerWakeHandled && !deviceConnected) {
-    unsigned long elapsed = millis() - reconnectWindowStart;
-    
-    // Show countdown every 5 seconds
-    static unsigned long lastCountdown = 0;
-    if (elapsed - lastCountdown > 5000) {
-      unsigned long remaining = (RECONNECT_WINDOW - elapsed) / 1000;
-      Serial.print("⏱️ Reconnection window: ");
-      Serial.print(remaining);
-      Serial.println(" seconds remaining");
-      lastCountdown = elapsed;
+  if (isTimerWake && !timerSMSSent) {
+    if (timerWakeStart == 0) {
+      timerWakeStart = millis();
+      Serial.println("\n⏰ Timer wake - Monitoring for BLE reconnection");
+      Serial.println("📱 SMS will be sent if no reconnection and alerts enabled");
+      
+      // Ensure disconnectSMSSent is true for timer wake (it should be preserved)
+      if (!disconnectSMSSent) {
+        Serial.println("⚠️ Timer wake but disconnectSMSSent is false - fixing state");
+        disconnectSMSSent = true;  // Fix the state
+      }
     }
     
-    // Window expired - send SMS and go back to sleep
-    if (elapsed >= RECONNECT_WINDOW) {
-      Serial.println("\n📱 No reconnection - Sending scheduled SMS...");
-      
-      // Ensure BLE is still advertising
-      if (pServer && !pServer->getConnectedCount()) {
-        pServer->getAdvertising()->start();
-        Serial.println("🔄 BLE advertising refreshed");
+    // Check if still disconnected and alerts are enabled
+    if (!deviceConnected) {
+      // Show status every 10 seconds
+      static unsigned long lastStatusShow = 0;
+      if (millis() - lastStatusShow > 10000) {
+        Serial.println("⏱️ Still monitoring for BLE reconnection...");
+        lastStatusShow = millis();
       }
       
-      // Try to get fresh GPS if old
-      unsigned long currentTime = millis();
-      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {
-        Serial.println("🛰️ Acquiring fresh GPS fix...");
-        if (acquireGPSFix(currentGPS, 30)) {
-          status.lastGPSTime = currentTime;
-          saveGPSData(currentGPS);
-          logGPSPoint(currentGPS, 2);
-        }
-      }
-      
-      // Send SMS
-      if (currentGPS.valid) {
-        if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
-          Serial.println("✅ Scheduled SMS sent successfully!");
+      // After reasonable wait time (60 seconds), send SMS if alerts enabled
+      if (millis() - timerWakeStart > 60000 && !timerSMSSent) {
+        // Check if alerts are still enabled
+        if (config.alertEnabled && strlen(config.phoneNumber) > 0) {
+          Serial.println("\n📱 No reconnection - Sending scheduled SMS...");
+          
+          // Ensure BLE is still advertising
+          if (pServer && !pServer->getConnectedCount()) {
+            pServer->getAdvertising()->start();
+            Serial.println("🔄 BLE advertising refreshed");
+          }
+          
+          // Always get fresh GPS for accurate tracking
+          unsigned long currentTime = millis();
+          Serial.println("🛰️ Acquiring fresh GPS fix...");
+          if (acquireGPSFix(currentGPS, 30)) {
+            status.lastGPSTime = currentTime;
+            saveGPSData(currentGPS);
+            logGPSPoint(currentGPS, 2);
+          }
+          
+          // Send SMS
+          if (currentGPS.valid) {
+            if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
+              Serial.println("✅ Scheduled SMS sent successfully!");
+            } else {
+              Serial.println("❌ Failed to send scheduled SMS");
+            }
+          }
+          
+          timerSMSSent = true;  // Mark SMS as sent
+          lastDisconnectSMS = currentTime;  // Update last SMS time
         } else {
-          Serial.println("❌ Failed to send scheduled SMS");
+          Serial.println("⚠️ Alerts disabled or no phone configured - skipping SMS");
+          timerSMSSent = true;  // Mark as handled even if skipped
         }
+        
+        // After SMS (or skip), go to deep sleep for next interval
+        Serial.println("💤 Going back to deep sleep until next SMS...");
+        
+        // Reset flags for next timer wake
+        timerSMSSent = false;
+        timerWakeStart = 0;
+        isTimerWake = false;
+        
+        // IMPORTANT: Disable all wake sources first
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        
+        // Make sure interrupt pins are not floating
+        pinMode(INT1_PIN, INPUT_PULLDOWN);
+        pinMode(INT2_PIN, INPUT_PULLDOWN);
+        delay(100);
+        
+        // Configure timer-only wake
+        esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
+        Serial.flush();
+        delay(100);
+        esp_deep_sleep_start();
+        // Code will not reach here - system restarts on wake
       }
-      
-      // Reset flags for next timer wake
-      timerWakeHandled = false;
-      isTimerWake = false;
-      
-      // Go back to deep sleep for next interval
-      Serial.println("💤 Going back to deep sleep until next SMS...");
-      
-      // IMPORTANT: Disable all wake sources first
-      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-      
-      // Make sure interrupt pins are not floating
-      pinMode(INT1_PIN, INPUT_PULLDOWN);
-      pinMode(INT2_PIN, INPUT_PULLDOWN);
-      delay(100);
-      
-      // Configure timer-only wake
-      esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
-      Serial.flush();
-      delay(100);
-      esp_deep_sleep_start();
-      // Code will not reach here - system restarts on wake
     }
   }
   
-  // If reconnected during window, cancel SMS sending
-  if (timerWakeHandled && deviceConnected) {
-    Serial.println("✅ BLE Reconnected - SMS cycle stopped");
-    timerWakeHandled = false;
-    reconnectWindowStart = 0;
-    isTimerWake = false;  // Clear timer wake flag
-    disconnectSMSSent = false; // Reset for next disconnect
-    firstDisconnectLogged = false; // Reset first disconnect flag
-    motionWakeNeedsSMS = false; // Reset motion wake SMS flag
+  // If reconnected during timer wake, stop SMS and stay awake
+  if (isTimerWake && deviceConnected) {
+    Serial.println("✅ BLE Reconnected during timer wake - SMS cycle stopped");
+    Serial.println("📡 Staying awake for normal operation");
+    
+    // Clear all timer wake flags
+    isTimerWake = false;
+    timerSMSSent = false;
+    timerWakeStart = 0;
+    
+    // Reset disconnect flags for potential re-disconnect
+    disconnectSMSSent = false;
+    firstDisconnectLogged = false;
+    motionWakeNeedsSMS = false;
+    lastDisconnectSMS = 0;
+    
+    // Stay awake and continue normal operation
+    oldDeviceConnected = deviceConnected;  // Update connection state
   }
   
   // Handle BLE connection changes
@@ -703,19 +714,13 @@ void loop() {
     if (motionWakeNeedsSMS) {
       Serial.println("\n📱 Motion wake detected - Sending initial SMS now...");
       
-      // Try to get current GPS location
-      bool gpsAcquired = false;
-      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {
-        Serial.println("🛰️ Acquiring fresh GPS fix...");
-        gpsAcquired = acquireGPSFix(currentGPS, 30);
-        if (gpsAcquired) {
-          status.lastGPSTime = currentTime;
-          saveGPSData(currentGPS);
-          logGPSPoint(currentGPS, 2);
-        }
-      } else {
-        Serial.println("📍 Using cached GPS location");
-        gpsAcquired = true;
+      // Always get fresh GPS for accurate tracking
+      Serial.println("🛰️ Acquiring fresh GPS fix...");
+      bool gpsAcquired = acquireGPSFix(currentGPS, 30);
+      if (gpsAcquired) {
+        status.lastGPSTime = currentTime;
+        saveGPSData(currentGPS);
+        logGPSPoint(currentGPS, 2);
       }
       
       // Send SMS with location
@@ -751,9 +756,9 @@ void loop() {
       }
     }
     
-    // Check for motion (skip during timer wake reconnection window)
+    // Check for motion (skip during timer wake if SMS already sent)
     bool motion = false;
-    if (!timerWakeHandled) {
+    if (!isTimerWake || !timerSMSSent) {
       motion = motionSensor.detectMotion();
       
       if (motion) {
@@ -782,59 +787,59 @@ void loop() {
     }
     
     if (shouldSendSMS) {
-      
-      // Try to get current GPS location
-      bool gpsAcquired = false;
-      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {  // If no GPS or older than 5 minutes
+      // Double-check alerts are still enabled before sending
+      if (!config.alertEnabled) {
+        Serial.println("⚠️ Alerts disabled - skipping SMS");
+        disconnectSMSSent = true;  // Mark as handled to prevent repeated checks
+        lastDisconnectSMS = currentTime;
+      } else {
+        // Always get fresh GPS for accurate tracking
         Serial.println("🛰️ Acquiring fresh GPS fix...");
-        gpsAcquired = acquireGPSFix(currentGPS, 30);  // Try for 30 seconds
+        bool gpsAcquired = acquireGPSFix(currentGPS, 30);  // Try for 30 seconds
         if (gpsAcquired) {
           status.lastGPSTime = currentTime;
           saveGPSData(currentGPS);
           logGPSPoint(currentGPS, 2);  // Type 2 for disconnect event
         }
-      } else {
-        Serial.println("📍 Using cached GPS location");
-        gpsAcquired = true;
-      }
-      
-      // Send SMS with location (current or last known)
-      if (gpsAcquired || currentGPS.valid) {
-        if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
-          Serial.println("✅ Location SMS sent successfully!");
-          disconnectSMSSent = true;
-          lastDisconnectSMS = currentTime;
-          lastSMSTime = currentTime;
-        } else {
-          Serial.println("❌ Failed to send location SMS");
-        }
-      } else {
-        // No GPS available, send simple notification
-        String message = "Bike Tracker Alert\n\n";
-        message += "GPS location unavailable\n";
-        message += "Last known location may be outdated\n\n";
-        message += "Device Status\n";
-        message += "User: ";
-        message += status.userPresent ? "Present" : "Away";
-        message += "\n";
-        message += "SMS Interval: ";
-        message += String(config.updateInterval);
-        message += " seconds";
         
-        if (sendSMS(config.phoneNumber, message)) {
-          Serial.println("✅ Alert SMS sent (no GPS)");
-          disconnectSMSSent = true;
-          lastDisconnectSMS = currentTime;
-          lastSMSTime = currentTime;
+        // Send SMS with location (current or last known)
+        if (gpsAcquired || currentGPS.valid) {
+          if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
+            Serial.println("✅ Location SMS sent successfully!");
+            disconnectSMSSent = true;
+            lastDisconnectSMS = currentTime;
+            lastSMSTime = currentTime;
+          } else {
+            Serial.println("❌ Failed to send location SMS");
+          }
         } else {
-          Serial.println("❌ Failed to send alert SMS");
+          // No GPS available, send simple notification
+          String message = "Bike Tracker Alert\n\n";
+          message += "GPS location unavailable\n";
+          message += "Last known location may be outdated\n\n";
+          message += "Device Status\n";
+          message += "User: ";
+          message += status.userPresent ? "Present" : "Away";
+          message += "\n";
+          message += "SMS Interval: ";
+          message += String(config.updateInterval);
+          message += " seconds";
+          
+          if (sendSMS(config.phoneNumber, message)) {
+            Serial.println("✅ Alert SMS sent (no GPS)");
+            disconnectSMSSent = true;
+            lastDisconnectSMS = currentTime;
+            lastSMSTime = currentTime;
+          } else {
+            Serial.println("❌ Failed to send alert SMS");
+          }
         }
       }
     }
     
-    // Sleep management when disconnected (skip during timer wake reconnection window)
+    // Sleep management when disconnected (skip if actively handling timer wake)
     // Also skip if we're in timer wake mode (motion sensor not initialized)
-    if (!timerWakeHandled && !isTimerWake && !motion && !inSleepMode && 
+    if (!isTimerWake && !motion && !inSleepMode && 
         motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
       Serial.println("😴 No motion for 10 seconds - Preparing for sleep...");
       
