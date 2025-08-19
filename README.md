@@ -1,6 +1,6 @@
 # Smart Bike Tracker
 
-An advanced anti-theft system for bicycles combining ESP32 hardware with a Flutter mobile application. The system detects theft through motion sensors and automatically sends SMS alerts with GPS coordinates when unauthorized movement is detected.
+An prototype anti-theft system for bicycles combining ESP32 hardware with a Flutter mobile application. The system detects theft through motion sensors and automatically sends SMS alerts with GPS coordinates when unauthorized movement is detected.
 
 ## Key Features
 
