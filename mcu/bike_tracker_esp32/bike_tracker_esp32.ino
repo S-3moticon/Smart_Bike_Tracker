@@ -60,6 +60,7 @@ bool inSleepMode = false;
 // SMS tracking variables (need to be global for deep sleep wake)
 RTC_DATA_ATTR bool disconnectSMSSent = false;  // Preserved across deep sleep
 RTC_DATA_ATTR unsigned long lastDisconnectSMS = 0;  // Preserved across deep sleep
+RTC_DATA_ATTR bool isTimerWake = false;  // Track if we woke from timer
 
 // Forward declarations
 void saveConfiguration();
@@ -147,7 +148,7 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
             String interval = jsonStr.substring(intervalStart, intervalEnd);
             interval.trim();
             int newInterval = interval.toInt();
-            if (newInterval >= 10 && newInterval <= 3600) {  // Valid range: 10s to 1 hour
+            if (newInterval >= 60 && newInterval <= 3600) {  // Valid range: 1 minute to 1 hour
               config.updateInterval = newInterval;
               configChanged = true;
             }
@@ -180,7 +181,7 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
 void loadConfiguration() {
   preferences.begin("bike-tracker", false);
   preferences.getString("phone", config.phoneNumber, sizeof(config.phoneNumber));
-  config.updateInterval = preferences.getUShort("interval", 300);  // Default 5 minutes
+  config.updateInterval = preferences.getUShort("interval", 600);  // Default 10 minutes
   config.alertEnabled = preferences.getBool("alerts", true);       // Default enabled
   preferences.end();
 }
@@ -196,7 +197,7 @@ void saveConfiguration() {
 void clearConfiguration() {
   // Clear config structure
   memset(config.phoneNumber, 0, sizeof(config.phoneNumber));
-  config.updateInterval = 300;  // Reset to default 5 minutes
+  config.updateInterval = 600;  // Reset to default 10 minutes
   config.alertEnabled = true;   // Reset to default enabled
   
   // Clear from persistent storage
@@ -395,6 +396,8 @@ void setup() {
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
+    // This should only happen from light sleep, not deep sleep
+    // If we get here after deep sleep, it's likely a false trigger
     uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
     if (wakeup_pin_mask & (1ULL << INT1_PIN)) {
       Serial.println("🚨 Woken by motion on INT1");
@@ -402,23 +405,30 @@ void setup() {
     if (wakeup_pin_mask & (1ULL << INT2_PIN)) {
       Serial.println("🚨 Woken by motion on INT2");
     }
-    inSleepMode = false;
-    lastMotionTime = millis();
-    // Motion wake means first SMS should be sent
-    disconnectSMSSent = false;
+    
+    // If disconnectSMSSent is true, we were in deep sleep and shouldn't wake on motion
+    if (disconnectSMSSent) {
+      Serial.println("⚠️ Unexpected motion wake from deep sleep - treating as timer wake");
+      // Treat this as a timer wake
+      lastDisconnectSMS = 0;  // Trigger immediate SMS
+    } else {
+      // Normal motion wake from light sleep
+      inSleepMode = false;
+      lastMotionTime = millis();
+    }
   } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
     Serial.println("⏰ Woken by timer from deep sleep");
     // Timer wake means we need to send next SMS
-    // Mark that first SMS was already sent  
-    disconnectSMSSent = true;
+    // disconnectSMSSent is already preserved via RTC_DATA_ATTR
+    isTimerWake = true;  // Mark that we woke from timer
     // Set lastDisconnectSMS to 0 to trigger immediate SMS send
     lastDisconnectSMS = 0;
-    // Skip BLE initialization for timer wake - just send SMS and go back to sleep
   } else {
     Serial.println("🔄 Normal boot (not wake from sleep)");
     // Reset persistent variables on normal boot
     disconnectSMSSent = false;
     lastDisconnectSMS = 0;
+    isTimerWake = false;
   }
   
   // Initialize hardware
@@ -431,48 +441,41 @@ void setup() {
   // Load configuration first
   loadConfiguration();
   
-  // Check if this is a timer wake for SMS - handle differently
+  // Always initialize BLE for reconnection capability
+  initBLE();
+  initGPSHistory();
+  
+  // Load last known GPS location
+  if (loadGPSData(currentGPS)) {
+    Serial.println("📍 Loaded last GPS location:");
+    Serial.print("   Lat: ");
+    Serial.println(currentGPS.latitude);
+    Serial.print("   Lon: ");
+    Serial.println(currentGPS.longitude);
+  } else {
+    Serial.println("📍 No previous GPS data available");
+    currentGPS.valid = false;
+  }
+  
+  // Check if this is a timer wake for SMS
   if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && disconnectSMSSent) {
-    Serial.println("📱 Timer wake for SMS - minimal initialization");
+    Serial.println("📱 Timer wake for SMS - BLE initialized for reconnection");
+    Serial.println("⏱️ 30-second window for BLE reconnection...");
     
-    // Load GPS history for logging
-    initGPSHistory();
+    // Start BLE advertising immediately for reconnection
+    pServer->startAdvertising();
+    Serial.println("🔄 BLE advertising started - device discoverable");
     
-    // Load last known GPS location
-    if (loadGPSData(currentGPS)) {
-      Serial.println("📍 Using stored GPS location");
-    }
-    
-    // Initialize SIM7070G for SMS
+    // Initialize SIM7070G for potential SMS
     if (!initializeSIM7070G()) {
-      Serial.println("⚠️ SIM7070G init failed - going back to sleep");
-      // Go back to sleep if we can't send SMS
-      esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
-      esp_deep_sleep_start();
+      Serial.println("⚠️ SIM7070G init failed");
     }
     
-    // Skip BLE and motion sensor init - we'll send SMS and go back to sleep
-    deviceConnected = false;
-    oldDeviceConnected = false;
+    // Skip motion sensor init on timer wake to save power
+    Serial.println("⚠️ Motion sensor skipped on timer wake");
     
   } else {
-    // Normal initialization for all other wake reasons
-    initBLE();
-    initGPSHistory();
-    
-    // Load last known GPS location
-    if (loadGPSData(currentGPS)) {
-      Serial.println("📍 Loaded last GPS location:");
-      Serial.print("   Lat: ");
-      Serial.println(currentGPS.latitude);
-      Serial.print("   Lon: ");
-      Serial.println(currentGPS.longitude);
-    } else {
-      Serial.println("📍 No previous GPS data available");
-      currentGPS.valid = false;
-    }
-    
-    // Initialize LSM6DSL motion sensor
+    // Initialize LSM6DSL motion sensor for other wake reasons
     Serial.println("Initializing LSM6DSL motion sensor...");
     if (motionSensor.begin()) {
       Serial.println("✅ LSM6DSL initialized");
@@ -503,47 +506,88 @@ void loop() {
   static unsigned long lastStatusUpdate = 0;
   static unsigned long lastSleepCheck = 0;
   
-  // Special handling for timer wake - send SMS and go back to sleep
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER && disconnectSMSSent) {
-    Serial.println("\n📱 Sending scheduled SMS after timer wake...");
+  // Handle timer wake with reconnection window
+  static bool timerWakeHandled = false;
+  static unsigned long reconnectWindowStart = 0;
+  const unsigned long RECONNECT_WINDOW = 30000; // 30 seconds for reconnection
+  
+  if (isTimerWake && disconnectSMSSent && !timerWakeHandled) {
+    // Start reconnection window on first loop after timer wake
+    reconnectWindowStart = millis();
+    timerWakeHandled = true;
+    Serial.println("\n⏰ Timer wake - 30 second window for BLE reconnection");
+    Serial.println("📱 SMS will be sent if no reconnection occurs");
+  }
+  
+  // Check if we're in the reconnection window after timer wake
+  if (timerWakeHandled && !deviceConnected) {
+    unsigned long elapsed = millis() - reconnectWindowStart;
     
-    // Try to get fresh GPS if old
-    unsigned long currentTime = millis();
-    if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {
-      Serial.println("🛰️ Acquiring fresh GPS fix...");
-      if (acquireGPSFix(currentGPS, 30)) {
-        status.lastGPSTime = currentTime;
-        saveGPSData(currentGPS);
-        logGPSPoint(currentGPS, 2);
-      }
+    // Show countdown every 5 seconds
+    static unsigned long lastCountdown = 0;
+    if (elapsed - lastCountdown > 5000) {
+      unsigned long remaining = (RECONNECT_WINDOW - elapsed) / 1000;
+      Serial.print("⏱️ Reconnection window: ");
+      Serial.print(remaining);
+      Serial.println(" seconds remaining");
+      lastCountdown = elapsed;
     }
     
-    // Send SMS
-    if (currentGPS.valid) {
-      if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
-        Serial.println("✅ Scheduled SMS sent successfully!");
-      } else {
-        Serial.println("❌ Failed to send scheduled SMS");
+    // Window expired - send SMS and go back to sleep
+    if (elapsed >= RECONNECT_WINDOW) {
+      Serial.println("\n📱 No reconnection - Sending scheduled SMS...");
+      
+      // Try to get fresh GPS if old
+      unsigned long currentTime = millis();
+      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {
+        Serial.println("🛰️ Acquiring fresh GPS fix...");
+        if (acquireGPSFix(currentGPS, 30)) {
+          status.lastGPSTime = currentTime;
+          saveGPSData(currentGPS);
+          logGPSPoint(currentGPS, 2);
+        }
       }
+      
+      // Send SMS
+      if (currentGPS.valid) {
+        if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
+          Serial.println("✅ Scheduled SMS sent successfully!");
+        } else {
+          Serial.println("❌ Failed to send scheduled SMS");
+        }
+      }
+      
+      // Reset flags for next timer wake
+      timerWakeHandled = false;
+      isTimerWake = false;
+      
+      // Go back to deep sleep for next interval
+      Serial.println("💤 Going back to deep sleep until next SMS...");
+      
+      // IMPORTANT: Disable all wake sources first
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+      
+      // Make sure interrupt pins are not floating
+      pinMode(INT1_PIN, INPUT_PULLDOWN);
+      pinMode(INT2_PIN, INPUT_PULLDOWN);
+      delay(100);
+      
+      // Configure timer-only wake
+      esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
+      Serial.flush();
+      delay(100);
+      esp_deep_sleep_start();
+      // Code will not reach here - system restarts on wake
     }
-    
-    // Go back to deep sleep for next interval
-    Serial.println("💤 Going back to deep sleep until next SMS...");
-    
-    // IMPORTANT: Disable all wake sources first
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    
-    // Make sure interrupt pins are not floating
-    pinMode(INT1_PIN, INPUT_PULLDOWN);
-    pinMode(INT2_PIN, INPUT_PULLDOWN);
-    delay(100);
-    
-    // Configure timer-only wake
-    esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
-    Serial.flush();
-    delay(100);
-    esp_deep_sleep_start();
-    // Code will not reach here - system restarts on wake
+  }
+  
+  // If reconnected during window, cancel SMS sending
+  if (timerWakeHandled && deviceConnected) {
+    Serial.println("✅ BLE Reconnected - SMS cycle stopped");
+    timerWakeHandled = false;
+    reconnectWindowStart = 0;
+    isTimerWake = false;  // Clear timer wake flag
+    disconnectSMSSent = false; // Reset for next disconnect
   }
   
   // Handle BLE connection changes
@@ -758,37 +802,41 @@ void loop() {
         
         // Check wake reason after light sleep
         esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-        bool shouldStayAwake = true;
+        bool shouldStayAwake = false;
         
         if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
           Serial.println("⏰ Woken by timer for next SMS");
-          // For timer wake after first SMS, don't need motion
+          shouldStayAwake = true;
         } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
-        Serial.println("🚨 Wake interrupt triggered");
-        
-        // Clear interrupts first
-        motionSensor.clearMotionInterrupts();
-        delay(100);
-        
-        // Validate motion by checking actual sensor data
-        bool realMotion = false;
-        for (int i = 0; i < 5; i++) {
-          if (motionSensor.getMotionDelta() > MOTION_THRESHOLD_LOW) {
-            realMotion = true;
-            break;
+          Serial.println("🚨 Wake interrupt triggered");
+          
+          // Clear interrupts first
+          motionSensor.clearMotionInterrupts();
+          delay(100);
+          
+          // Validate motion by checking actual sensor data
+          bool realMotion = false;
+          for (int i = 0; i < 5; i++) {
+            float delta = motionSensor.getMotionDelta();
+            if (delta > MOTION_THRESHOLD_LOW) {
+              Serial.print("Motion detected! Delta: ");
+              Serial.print(delta);
+              Serial.println("g");
+              realMotion = true;
+              break;
+            }
+            delay(50);
           }
-          delay(50);
+          
+          if (realMotion) {
+            Serial.println("🚨 Motion detected - Waking from sleep");
+            lastMotionTime = millis();
+            shouldStayAwake = true;
+          } else {
+            Serial.println("❌ False wake - no real motion detected");
+            shouldStayAwake = false;
+          }
         }
-        
-        if (realMotion) {
-          Serial.println("✅ Real motion confirmed");
-          lastMotionTime = millis();
-        } else {
-          Serial.println("❌ False wake - no real motion detected");
-          // Flag to go back to sleep
-          shouldStayAwake = false;
-        }
-      }
       
       if (shouldStayAwake) {
         inSleepMode = false;
