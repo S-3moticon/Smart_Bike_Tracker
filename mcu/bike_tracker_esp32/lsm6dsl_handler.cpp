@@ -18,6 +18,7 @@ LSM6DSL::LSM6DSL() {
   lastMotionTime = 0;
   referenceAccel = {0, 0, 1.0, 1.0};  // Default to gravity on Z-axis
   currentAccel = {0, 0, 0, 0};
+  initialized = false;
 }
 
 /*
@@ -39,6 +40,7 @@ bool LSM6DSL::begin() {
     whoami = readRegister(LSM6DSL_WHO_AM_I);
     if (whoami != 0x6A) {
       Serial.printf("LSM6DSL not found. WHO_AM_I: 0x%02X\n", whoami);
+      initialized = false;
       return false;
     }
   }
@@ -78,6 +80,7 @@ bool LSM6DSL::begin() {
   }
   
   lastMotionTime = millis();
+  initialized = true;
   
   return true;
 }
@@ -235,6 +238,7 @@ void LSM6DSL::setPowerDownMode() {
   writeRegister(LSM6DSL_CTRL2_G, 0x00);
   delay(10);
   
+  initialized = false;  // Mark as not initialized when powered down
   Serial.println("LSM6DSL powered down");
 }
 

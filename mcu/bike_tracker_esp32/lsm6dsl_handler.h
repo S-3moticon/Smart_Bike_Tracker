@@ -74,6 +74,7 @@ private:
   AccelData referenceAccel;
   bool motionDetectedFlag;
   unsigned long lastMotionTime;
+  bool initialized;
   
   // I2C communication
   uint8_t readRegister(uint8_t reg);
@@ -86,6 +87,7 @@ public:
   // Initialization
   bool begin();
   bool isConnected();
+  bool isInitialized() { return initialized; }
   
   // Motion detection
   bool detectMotion();

@@ -631,6 +631,17 @@ void loop() {
     Serial.println("✅ BLE Reconnected during timer wake - SMS cycle stopped");
     Serial.println("📡 Staying awake for normal operation");
     
+    // Initialize motion sensor if it was skipped during timer wake
+    if (!motionSensor.isInitialized()) {
+      Serial.println("🔄 Initializing motion sensor for normal operation...");
+      if (motionSensor.begin()) {
+        Serial.println("✅ LSM6DSL initialized after timer wake reconnection");
+        lastMotionTime = millis();
+      } else {
+        Serial.println("⚠️ LSM6DSL initialization failed");
+      }
+    }
+    
     // Clear all timer wake flags
     isTimerWake = false;
     timerSMSSent = false;
