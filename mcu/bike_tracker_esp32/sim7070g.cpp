@@ -34,17 +34,8 @@ bool initializeSIM7070G() {
   
   Serial.println("✅ SIM7070G module detected");
   
-  // Module reset for clean state
-  Serial.println("🔄 Resetting module...");
-  sendATCommand("AT+CFUN=1,1", "OK", 10000);
-  delay(10000);
-  
-  // Wait for module ready
-  attempts = 0;
-  while (!sendATCommand("AT", "OK") && attempts < 10) {
-    delay(1000);
-    attempts++;
-  }
+  // Skip reset on initial boot to save time and power
+  // Module will be reset when BLE disconnects if needed
   
   // Check signal quality
   sendATCommand("AT+CSQ", "OK", 5000);
