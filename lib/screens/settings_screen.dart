@@ -715,18 +715,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         spacing: 8,
                         children: [
                           ActionChip(
-                            label: const Text('10s'),
-                            onPressed: () {
-                              _intervalController.text = '10';
-                            },
-                          ),
-                          ActionChip(
-                            label: const Text('30s'),
-                            onPressed: () {
-                              _intervalController.text = '30';
-                            },
-                          ),
-                          ActionChip(
                             label: const Text('1 min'),
                             onPressed: () {
                               _intervalController.text = '60';
