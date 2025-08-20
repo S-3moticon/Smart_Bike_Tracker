@@ -47,6 +47,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<Map<String, dynamic>> _mcuGpsHistory = [];
   bool _isLoadingMcuHistory = false;
   
+  // Device status tracking
+  Map<String, dynamic>? _currentDeviceStatus;
+  
   // Tab controller for map/list/mcu view
   late TabController _tabController;
   
@@ -188,6 +191,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         });
         developer.log('GPS history updated via notification: ${history.length} points (reversed for display)', name: 'HomeScreen');
       }
+    });
+    
+    // Device status listener - track configuration state
+    _bleService.deviceStatus.listen((status) {
+      setState(() {
+        _currentDeviceStatus = status;
+      });
+      developer.log('Device status updated: phone_configured=${status['phone_configured']}, alerts=${status['alerts']}', name: 'HomeScreen');
     });
     
     // Listen to Bluetooth adapter state changes
@@ -362,6 +373,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   Future<void> _disconnect() async {
+    // Check device configuration status first
+    bool phoneConfigured = _currentDeviceStatus?['phone_configured'] ?? false;
+    bool alertsEnabled = _currentDeviceStatus?['alerts'] ?? false;
+    
+    // If either phone is not configured or alerts are disabled, show warning
+    if (!phoneConfigured || !alertsEnabled) {
+      final proceedWithDisconnect = await _showConfigurationWarning(
+        phoneConfigured: phoneConfigured,
+        alertsEnabled: alertsEnabled,
+      );
+      
+      if (!proceedWithDisconnect) {
+        return; // User cancelled or went to settings
+      }
+    }
+    
+    // Show normal disconnect confirmation
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -388,6 +416,95 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (mounted) {
         UIHelpers.showInfo(context, 'Disconnected from device');
       }
+    }
+  }
+  
+  Future<bool> _showConfigurationWarning({
+    required bool phoneConfigured,
+    required bool alertsEnabled,
+  }) async {
+    // Determine the warning message based on what's missing
+    String title;
+    String message;
+    
+    if (!phoneConfigured && !alertsEnabled) {
+      // Both issues
+      title = '⚠️ Protection Not Active';
+      message = 'SMS alerts are disabled and no phone number is configured.\n\n'
+                'Your bike will have NO theft protection while disconnected.\n\n'
+                'Configure protection settings before disconnecting?';
+    } else if (!phoneConfigured) {
+      // No phone number
+      title = '⚠️ No SMS Alerts Configured';
+      message = 'No phone number is configured for SMS alerts.\n\n'
+                'You won\'t receive notifications if your bike is moved while disconnected.\n\n'
+                'Add a phone number before disconnecting?';
+    } else {
+      // Alerts disabled
+      title = '⚠️ SMS Alerts Disabled';
+      message = 'SMS alerts are currently disabled.\n\n'
+                'You won\'t receive notifications even though a phone number is configured.\n\n'
+                'Enable alerts before disconnecting?';
+    }
+    
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, 
+                   color: Colors.orange,
+                   size: 28),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('cancel'),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('disconnect'),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
+              child: const Text('Disconnect Anyway'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('configure'),
+              child: Text(
+                !phoneConfigured ? 'Configure Now' : 'Enable Alerts',
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    
+    if (result == 'configure') {
+      // Navigate to settings screen
+      if (mounted) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const SettingsScreen(),
+          ),
+        );
+      }
+      return false; // Don't disconnect after going to settings
+    } else if (result == 'disconnect') {
+      return true; // Proceed with disconnect
+    } else {
+      return false; // Cancelled
     }
   }
   
