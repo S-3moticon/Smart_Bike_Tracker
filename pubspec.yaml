@@ -47,6 +47,9 @@ dependencies:
   # Location Services (for GPS tracking)
   geolocator: ^13.0.2
   
+  # Geocoding (for country detection from coordinates)
+  geocoding: ^3.0.0
+  
   # Map display with caching
   flutter_map: ^6.1.0
   flutter_map_cache: ^1.5.1

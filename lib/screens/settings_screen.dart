@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:developer' as developer;
 import '../services/bluetooth_service.dart' as bike_ble;
 import '../utils/ui_helpers.dart';
+import '../utils/country_codes.dart';
+import '../widgets/country_picker_dialog.dart';
 import '../constants/app_constants.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -27,44 +29,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Use predefined interval options from constants
   final List<int> _intervalOptions = AppConstants.smsIntervalPresets;
   
-  // Country codes with abbreviations
+  // Country code selection
   String _selectedCountryCode = '+1';
-  final List<Map<String, String>> _countryCodes = [
-    {'code': '+1', 'country': 'US/CA'},
-    {'code': '+44', 'country': 'UK'},
-    {'code': '+91', 'country': 'IN'},
-    {'code': '+86', 'country': 'CN'},
-    {'code': '+81', 'country': 'JP'},
-    {'code': '+82', 'country': 'KR'},
-    {'code': '+49', 'country': 'DE'},
-    {'code': '+33', 'country': 'FR'},
-    {'code': '+39', 'country': 'IT'},
-    {'code': '+34', 'country': 'ES'},
-    {'code': '+61', 'country': 'AU'},
-    {'code': '+55', 'country': 'BR'},
-    {'code': '+52', 'country': 'MX'},
-    {'code': '+7', 'country': 'RU'},
-    {'code': '+31', 'country': 'NL'},
-    {'code': '+46', 'country': 'SE'},
-    {'code': '+47', 'country': 'NO'},
-    {'code': '+45', 'country': 'DK'},
-    {'code': '+358', 'country': 'FI'},
-    {'code': '+48', 'country': 'PL'},
-    {'code': '+90', 'country': 'TR'},
-    {'code': '+971', 'country': 'AE'},
-    {'code': '+966', 'country': 'SA'},
-    {'code': '+65', 'country': 'SG'},
-    {'code': '+60', 'country': 'MY'},
-    {'code': '+62', 'country': 'ID'},
-    {'code': '+63', 'country': 'PH'},
-    {'code': '+66', 'country': 'TH'},
-    {'code': '+84', 'country': 'VN'},
-    {'code': '+27', 'country': 'ZA'},
-    {'code': '+234', 'country': 'NG'},
-    {'code': '+254', 'country': 'KE'},
-    {'code': '+20', 'country': 'EG'},
-    {'code': '+212', 'country': 'MA'},
-  ];
+  CountryCode? _selectedCountry;
+  bool _isDetectingLocation = false;
   
   // Phone number history
   List<String> _phoneNumberHistory = [];
@@ -76,6 +44,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    _detectCountryCode();
+  }
+  
+  Future<void> _detectCountryCode() async {
+    // Only detect if no saved phone number
+    final prefs = await SharedPreferences.getInstance();
+    final savedPhone = prefs.getString(AppConstants.keyConfigPhone) ?? '';
+    if (savedPhone.isNotEmpty) return;
+    
+    setState(() {
+      _isDetectingLocation = true;
+    });
+    
+    try {
+      // Try to get country code based on location
+      String? detectedCode = await CountryCodeHelper.getCountryCodeByLocation();
+      if (detectedCode != null && mounted) {
+        setState(() {
+          _selectedCountryCode = detectedCode;
+          _selectedCountry = CountryCodeHelper.getCountryByDialCode(detectedCode);
+          _isDetectingLocation = false;
+        });
+        developer.log('Auto-detected country code: $detectedCode', name: 'Settings');
+      } else {
+        setState(() {
+          _isDetectingLocation = false;
+        });
+      }
+    } catch (e) {
+      developer.log('Error detecting country code: $e', name: 'Settings', error: e);
+      setState(() {
+        _isDetectingLocation = false;
+      });
+    }
   }
   
   Future<void> _loadSettings() async {
@@ -88,11 +90,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Extract country code if present
       if (savedPhone.isNotEmpty) {
         // Try to match country code
-        for (var country in _countryCodes) {
-          if (savedPhone.startsWith(country['code']!)) {
-            _selectedCountryCode = country['code']!;
+        for (var country in CountryCodeHelper.countryCodes) {
+          if (savedPhone.startsWith(country.code)) {
+            _selectedCountryCode = country.code;
+            _selectedCountry = country;
             // Remove country code from phone number
-            _phoneController.text = savedPhone.substring(country['code']!.length).trim();
+            _phoneController.text = savedPhone.substring(country.code.length).trim();
             break;
           }
         }
@@ -330,11 +333,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   
   void _selectPhoneFromHistory(String phoneNumber) {
     // Extract country code if present
-    for (var country in _countryCodes) {
-      if (phoneNumber.startsWith(country['code']!)) {
+    for (var country in CountryCodeHelper.countryCodes) {
+      if (phoneNumber.startsWith(country.code)) {
         setState(() {
-          _selectedCountryCode = country['code']!;
-          _phoneController.text = phoneNumber.substring(country['code']!.length).trim();
+          _selectedCountryCode = country.code;
+          _selectedCountry = country;
+          _phoneController.text = phoneNumber.substring(country.code.length).trim();
           _validatePhoneNumber(_phoneController.text);
         });
         return;
@@ -437,6 +441,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return true;
   }
   
+  void _showCountryPicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.8,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) {
+            return CountryPickerDialog(
+              selectedCode: _selectedCountryCode,
+              onCountrySelected: (CountryCode country) {
+                setState(() {
+                  _selectedCountryCode = country.code;
+                  _selectedCountry = country;
+                  // Revalidate phone number when country changes
+                  _validatePhoneNumber(_phoneController.text);
+                });
+                Navigator.pop(context);
+              },
+              scrollController: scrollController,
+            );
+          },
+        );
+      },
+    );
+  }
+  
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -492,29 +529,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           // Country Code Dropdown
                           SizedBox(
                             width: 130,
-                            child: DropdownButtonFormField<String>(
-                              value: _selectedCountryCode,
-                              decoration: const InputDecoration(
-                                labelText: 'Country',
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 15),
+                            child: InkWell(
+                              onTap: _showCountryPicker,
+                              child: InputDecorator(
+                                decoration: InputDecoration(
+                                  labelText: 'Country',
+                                  border: const OutlineInputBorder(),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 15),
+                                  suffixIcon: _isDetectingLocation 
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: Padding(
+                                          padding: EdgeInsets.all(12.0),
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    : const Icon(Icons.arrow_drop_down, size: 20),
+                                ),
+                                child: Row(
+                                  children: [
+                                    if (_selectedCountry != null) ...[
+                                      Text(_selectedCountry!.flag, style: const TextStyle(fontSize: 18)),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          _selectedCountry!.code,
+                                          style: const TextStyle(fontSize: 13),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ] else
+                                      Text(_selectedCountryCode, style: const TextStyle(fontSize: 13)),
+                                  ],
+                                ),
                               ),
-                              items: _countryCodes.map((country) {
-                                return DropdownMenuItem<String>(
-                                  value: country['code'],
-                                  child: Text(
-                                    '${country['code']} (${country['country']})',
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedCountryCode = value!;
-                                  // Revalidate phone number when country changes
-                                  _validatePhoneNumber(_phoneController.text);
-                                });
-                              },
                             ),
                           ),
                           const SizedBox(width: 12),
