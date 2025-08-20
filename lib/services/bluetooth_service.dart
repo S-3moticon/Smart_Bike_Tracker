@@ -5,9 +5,11 @@ import 'dart:io' show Platform;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/bike_device.dart';
 import '../constants/ble_protocol.dart';
 import '../constants/app_constants.dart';
+import '../utils/permission_helper.dart';
 
 class BikeBluetoothService {
   static final BikeBluetoothService _instance = BikeBluetoothService._internal();
@@ -71,8 +73,15 @@ class BikeBluetoothService {
         return false;
       }
       
-      // Request Bluetooth permissions for Android 12+
+      // Check location services first (required for BLE scanning on Android)
       if (Platform.isAndroid) {
+        bool locationEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!locationEnabled) {
+          developer.log('Location services disabled - required for BLE scanning', name: 'BLE');
+          return false;
+        }
+        
+        // Request Bluetooth permissions for Android 12+
         final permissions = await _requestBluetoothPermissions();
         if (!permissions) {
           developer.log('Bluetooth permissions not granted', name: 'BLE');
@@ -119,6 +128,15 @@ class BikeBluetoothService {
   
   Future<void> startScan({Duration timeout = const Duration(seconds: AppConstants.bleScanTimeout)}) async {
     try {
+      // Check location services before scanning
+      if (Platform.isAndroid) {
+        bool locationEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!locationEnabled) {
+          developer.log('Cannot start scan - location services disabled', name: 'BLE');
+          throw Exception('Location services must be enabled for Bluetooth scanning');
+        }
+      }
+      
       _discoveredDevices.clear();
       _scanResultsController.add([]);
       
@@ -128,9 +146,11 @@ class BikeBluetoothService {
       await FlutterBluePlus.stopScan();
       
       // Start scan without service filter to ensure we see all devices
+      // Note: androidUsesFineLocation is set to false for Android 12+ if we don't need location-based filtering
       await FlutterBluePlus.startScan(
         timeout: timeout,
         androidScanMode: AndroidScanMode.lowLatency,
+        androidUsesFineLocation: false,  // Don't require fine location for Android 12+
       );
       
       _scanSubscription?.cancel();
@@ -948,6 +968,15 @@ class BikeBluetoothService {
   
   Future<bool> tryAutoConnect() async {
     try {
+      // Check location services first
+      if (Platform.isAndroid) {
+        bool locationEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!locationEnabled) {
+          developer.log('Cannot auto-connect - location services disabled', name: 'BLE');
+          return false;
+        }
+      }
+      
       final lastDevice = await getLastConnectedDevice();
       if (lastDevice == null) {
         developer.log('No saved device for auto-connect', name: 'BLE');

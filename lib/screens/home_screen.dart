@@ -14,6 +14,7 @@ import '../widgets/location_map.dart';
 import '../widgets/device_status_card.dart';
 import '../widgets/map_download_dialog.dart';
 import '../utils/ui_helpers.dart';
+import '../utils/permission_helper.dart';
 import '../constants/app_constants.dart';
 import 'settings_screen.dart';
 
@@ -247,9 +248,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     setState(() {});
     
+    // Check permissions and location services first
+    bool permissionsReady = await PermissionHelper.checkAndRequestPermissions(context);
+    if (!permissionsReady) {
+      developer.log('Permissions not ready for auto-connect', name: 'HomeScreen');
+      return;
+    }
+    
     // Check Bluetooth availability
     final available = await _bleService.checkBluetoothAvailability();
-    if (!available) return;
+    if (!available) {
+      developer.log('Bluetooth not available for auto-connect', name: 'HomeScreen');
+      return;
+    }
     
     // Try auto-connect if enabled and has saved device
     if (_autoConnectEnabled && _savedDevice != null) {
@@ -282,6 +293,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Future<void> _startScan() async {
     if (_isScanning || _connectionState == BluetoothConnectionState.connected) return;
     
+    // Check permissions and location services first
+    bool permissionsReady = await PermissionHelper.checkAndRequestPermissions(context);
+    if (!permissionsReady) {
+      developer.log('Permissions not ready, cannot start scan', name: 'HomeScreen');
+      if (mounted) {
+        UIHelpers.showError(context, 'Location services must be enabled to scan for devices');
+      }
+      return;
+    }
+    
     setState(() {
       _isScanning = true;
       _availableDevices.clear();
@@ -299,9 +320,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
     } catch (e) {
       developer.log('Error scanning: $e', name: 'HomeScreen');
-      setState(() {
-        _isScanning = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+        
+        // Check if error is due to location services
+        if (e.toString().contains('Location services')) {
+          bool userAction = await PermissionHelper.requestLocationServices(context);
+          if (userAction) {
+            // User went to settings, wait a bit and retry
+            await Future.delayed(const Duration(seconds: 2));
+            // Check if location is now enabled
+            bool locationEnabled = await PermissionHelper.isLocationServiceEnabled();
+            if (locationEnabled) {
+              // Retry scanning
+              _startScan();
+            }
+          }
+        } else {
+          UIHelpers.showError(context, 'Failed to start scanning: ${e.toString()}');
+        }
+      }
     }
   }
   
