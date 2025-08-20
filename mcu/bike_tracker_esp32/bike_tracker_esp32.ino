@@ -57,6 +57,11 @@ unsigned long lastMotionTime = 0;
 unsigned long lastSMSTime = 0;
 bool inSleepMode = false;
 
+// IR Sensor Interrupt Variables (for optimal performance)
+volatile bool irStateChanged = false;
+volatile unsigned long lastIRChange = 0;
+const unsigned long IR_DEBOUNCE_TIME = 50;  // 50ms debounce time
+
 // SMS tracking variables (need to be global for deep sleep wake)
 RTC_DATA_ATTR bool disconnectSMSSent = false;  // Preserved across deep sleep
 RTC_DATA_ATTR unsigned long lastDisconnectSMS = 0;  // Preserved across deep sleep
@@ -71,6 +76,16 @@ void clearConfiguration();
 void updateStatusCharacteristic();
 void testGPSAndSMS();
 void syncGPSHistory();
+
+// IR Sensor Interrupt Handler
+void IRAM_ATTR handleIRChange() {
+  unsigned long currentTime = millis();
+  // Debounce check
+  if (currentTime - lastIRChange > IR_DEBOUNCE_TIME) {
+    irStateChanged = true;
+    lastIRChange = currentTime;
+  }
+}
 
 // ============================================================================
 // BLE Server Callbacks
@@ -443,6 +458,9 @@ void setup() {
   status.deviceMode = "DISCONNECTED";
   status.lastGPSTime = 0;
   
+  // Attach interrupt for IR sensor (optimal performance)
+  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), handleIRChange, CHANGE);
+  
   // Load configuration first
   loadConfiguration();
   
@@ -535,6 +553,7 @@ void setup() {
 void loop() {
   static unsigned long lastStatusUpdate = 0;
   static unsigned long lastSleepCheck = 0;
+  static bool lastUserPresent = false;  // Track previous IR sensor state for change detection
   
   // Handle timer wake - monitor BLE continuously, no window limit
   static bool timerSMSSent = false;  // Track if SMS was sent this timer wake
@@ -1110,10 +1129,29 @@ void loop() {
     }
   }
   
-  // Periodic status update (every 10 seconds when connected)
-  if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
+  // Periodic status update (every 1 second when connected for faster IR sensor updates)
+  if (deviceConnected && (millis() - lastStatusUpdate > 1000)) {
     lastStatusUpdate = millis();
     updateStatusCharacteristic();
+  }
+  
+  // IR sensor change detection for immediate updates
+  // Method 1: Polling-based detection (backup for non-interrupt compatible pins)
+  if (deviceConnected) {
+    bool currentUserPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
+    if (currentUserPresent != lastUserPresent) {
+      lastUserPresent = currentUserPresent;
+      Serial.print("👤 IR Sensor Change Detected (Poll): User ");
+      Serial.println(currentUserPresent ? "Present" : "Away");
+      updateStatusCharacteristic();  // Send immediate update
+    }
+  }
+  
+  // Method 2: Interrupt-based detection (optimal performance)
+  if (irStateChanged && deviceConnected) {
+    irStateChanged = false;  // Clear the flag
+    Serial.println("⚡ IR Sensor Interrupt Triggered - Updating Status");
+    updateStatusCharacteristic();  // Send immediate update
   }
   
   delay(10);

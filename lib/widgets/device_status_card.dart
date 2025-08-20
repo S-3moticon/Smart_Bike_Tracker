@@ -20,7 +20,12 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
   void initState() {
     super.initState();
     _subscribeToStatus();
+    // Immediate status request for faster initial display
     _refreshStatus(); // Initial read
+    // Request status again after a short delay to ensure we get the latest
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _refreshStatus();
+    });
   }
   
   void _subscribeToStatus() {

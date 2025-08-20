@@ -13,12 +13,14 @@ class LocationMap extends StatefulWidget {
   final List<LocationData> locationHistory;
   final LocationData? currentLocation;
   final bool isTracking;
+  final List<Map<String, dynamic>>? mcuGpsPoints;
   
   const LocationMap({
     super.key,
     required this.locationHistory,
     this.currentLocation,
     required this.isTracking,
+    this.mcuGpsPoints,
   });
   
   @override
@@ -259,6 +261,55 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
           ),
         ),
       );
+    }
+    
+    // Add MCU GPS points as individual markers (no trace)
+    if (widget.mcuGpsPoints != null) {
+      for (int i = 0; i < widget.mcuGpsPoints!.length; i++) {
+        final point = widget.mcuGpsPoints![i];
+        final lat = point['latitude'] ?? 0.0;
+        final lng = point['longitude'] ?? 0.0;
+        
+        // Skip invalid points
+        if (lat == 0.0 && lng == 0.0) continue;
+        
+        // Style differently from phone GPS markers
+        // Use a diamond shape for MCU GPS points
+        markers.add(
+          Marker(
+            point: LatLng(lat, lng),
+            width: 24,
+            height: 24,
+            child: Transform.rotate(
+              angle: 0.785398, // 45 degrees in radians
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.8),
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Transform.rotate(
+                  angle: -0.785398, // Rotate icon back
+                  child: const Icon(
+                    Icons.satellite_alt,
+                    color: Colors.white,
+                    size: 12,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     }
     
     return markers;

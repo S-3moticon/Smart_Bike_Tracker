@@ -1009,6 +1009,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           locationHistory: _locationHistory,
                           currentLocation: _currentLocation,
                           isTracking: _isTrackingLocation,
+                          mcuGpsPoints: _mcuGpsHistory,
                         ),
                         // List View - wrapped in builder to maintain state
                         Builder(
