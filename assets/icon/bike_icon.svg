@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="256" cy="256" r="240" fill="#2C5F7C"/>
+  
+  <!-- Bike Frame -->
+  <g transform="translate(256, 256)">
+    <!-- Main Triangle Frame -->
+    <path d="M -40 -20 L 40 -20 L 0 -80 Z" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linejoin="round"/>
+    
+    <!-- Seat Post -->
+    <line x1="0" y1="-80" x2="0" y2="-110" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+    
+    <!-- Seat -->
+    <ellipse cx="0" cy="-115" rx="25" ry="8" fill="#FFFFFF"/>
+    
+    <!-- Handlebars -->
+    <line x1="40" y1="-20" x2="50" y2="-45" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+    <line x1="35" y1="-45" x2="65" y2="-45" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+    
+    <!-- Pedal Crank -->
+    <circle cx="0" cy="-20" r="6" fill="#FFFFFF"/>
+    <line x1="-15" y1="-10" x2="15" y2="-30" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+    
+    <!-- Chain (simplified) -->
+    <path d="M 0 -20 Q -60 0 -80 40" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 0 -20 Q 60 0 80 40" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+    
+    <!-- Rear Wheel -->
+    <circle cx="-80" cy="40" r="50" fill="none" stroke="#FFFFFF" stroke-width="10"/>
+    <circle cx="-80" cy="40" r="8" fill="#FFFFFF"/>
+    <!-- Spokes -->
+    <line x1="-80" y1="40" x2="-80" y2="-10" stroke="#FFFFFF" stroke-width="4"/>
+    <line x1="-80" y1="40" x2="-130" y2="40" stroke="#FFFFFF" stroke-width="4"/>
+    <line x1="-80" y1="40" x2="-30" y2="40" stroke="#FFFFFF" stroke-width="4"/>
+    
+    <!-- Front Wheel -->
+    <circle cx="80" cy="40" r="50" fill="none" stroke="#FFFFFF" stroke-width="10"/>
+    <circle cx="80" cy="40" r="8" fill="#FFFFFF"/>
+    <!-- Spokes -->
+    <line x1="80" y1="40" x2="80" y2="-10" stroke="#FFFFFF" stroke-width="4"/>
+    <line x1="80" y1="40" x2="30" y2="40" stroke="#FFFFFF" stroke-width="4"/>
+    <line x1="80" y1="40" x2="130" y2="40" stroke="#FFFFFF" stroke-width="4"/>
+    
+    <!-- GPS Signal Waves -->
+    <path d="M -20 -140 Q 0 -150 20 -140" fill="none" stroke="#4A8CAC" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+    <path d="M -30 -155 Q 0 -170 30 -155" fill="none" stroke="#4A8CAC" stroke-width="5" stroke-linecap="round" opacity="0.6"/>
+    <path d="M -40 -170 Q 0 -190 40 -170" fill="none" stroke="#4A8CAC" stroke-width="4" stroke-linecap="round" opacity="0.4"/>
+  </g>
+  
+  <!-- Location Pin (small) -->
+  <g transform="translate(350, 150)">
+    <path d="M 0 0 C -15 0 -27 12 -27 27 C -27 42 0 70 0 70 S 27 42 27 27 C 27 12 15 0 0 0 Z" fill="#82CFFF"/>
+    <circle cx="0" cy="27" r="10" fill="#2C5F7C"/>
+  </g>
+</svg>
