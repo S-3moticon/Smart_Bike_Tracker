@@ -27,9 +27,9 @@ class AppConstants {
   
   // SMS Configuration
   static const int defaultSmsInterval = 300; // seconds (5 minutes)
-  static const int minSmsInterval = 10; // seconds
+  static const int minSmsInterval = 60; // seconds (1 minute minimum)
   static const int maxSmsInterval = 3600; // seconds (1 hour)
-  static const List<int> smsIntervalPresets = [10, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  static const List<int> smsIntervalPresets = [60, 120, 300, 600, 900, 1800, 3600];
   
   // Map Download
   static const int defaultDownloadRadius = 5; // km

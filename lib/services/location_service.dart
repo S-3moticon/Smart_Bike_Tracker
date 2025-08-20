@@ -10,6 +10,8 @@ class LocationService {
   
   StreamSubscription<Position>? _positionSubscription;
   final _locationController = StreamController<LocationData>.broadcast();
+  Position? _lastKnownPosition;
+  DateTime? _lastPositionTime;
   
   Stream<LocationData> get locationStream => _locationController.stream;
   
@@ -55,15 +57,43 @@ class LocationService {
       
       developer.log('Starting location tracking', name: 'Location');
       
-      // Configure location settings
+      // First, try to get last known position for immediate feedback
+      try {
+        Position? lastPosition = await Geolocator.getLastKnownPosition();
+        if (lastPosition != null) {
+          // Check if position is recent (within 5 minutes)
+          final age = DateTime.now().difference(lastPosition.timestamp);
+          if (age.inMinutes < 5) {
+            developer.log('Using last known position (${age.inSeconds}s old)', name: 'Location');
+            _lastKnownPosition = lastPosition;
+            _lastPositionTime = lastPosition.timestamp;
+            
+            final locationData = LocationData(
+              latitude: lastPosition.latitude,
+              longitude: lastPosition.longitude,
+              timestamp: lastPosition.timestamp,
+            );
+            _locationController.add(locationData);
+          }
+        }
+      } catch (e) {
+        developer.log('Could not get last known position: $e', name: 'Location');
+      }
+      
+      // Configure optimized location settings
+      // Use BestForNavigation for faster initial fix, then switch to High accuracy
       const LocationSettings locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10, // Update every 10 meters
+        accuracy: LocationAccuracy.bestForNavigation, // Better for quick fix
+        distanceFilter: 5, // More frequent updates (5 meters)
+        timeLimit: Duration(seconds: 10), // Timeout for each update
       );
       
       _positionSubscription = Geolocator.getPositionStream(
         locationSettings: locationSettings,
       ).listen((Position position) {
+        _lastKnownPosition = position;
+        _lastPositionTime = position.timestamp;
+        
         final locationData = LocationData(
           latitude: position.latitude,
           longitude: position.longitude,
@@ -74,6 +104,16 @@ class LocationService {
         developer.log('Location update: ${locationData.formattedCoordinates}', name: 'Location');
       }, onError: (error) {
         developer.log('Location error: $error', name: 'Location', error: error);
+        
+        // On error, try to use last known position if available
+        if (_lastKnownPosition != null) {
+          final locationData = LocationData(
+            latitude: _lastKnownPosition!.latitude,
+            longitude: _lastKnownPosition!.longitude,
+            timestamp: _lastKnownPosition!.timestamp,
+          );
+          _locationController.add(locationData);
+        }
       });
     } catch (e) {
       developer.log('Error starting location tracking: $e', name: 'Location', error: e);
@@ -91,21 +131,131 @@ class LocationService {
       final hasPermission = await checkLocationPermission();
       if (!hasPermission) return null;
       
-      const LocationSettings locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.high,
+      // First try to get last known position for immediate response
+      Position? lastPosition = await Geolocator.getLastKnownPosition();
+      if (lastPosition != null) {
+        final age = DateTime.now().difference(lastPosition.timestamp);
+        if (age.inMinutes < 2) {
+          // If position is less than 2 minutes old, use it immediately
+          developer.log('Using recent cached position (${age.inSeconds}s old)', name: 'Location');
+          return LocationData(
+            latitude: lastPosition.latitude,
+            longitude: lastPosition.longitude,
+            timestamp: lastPosition.timestamp,
+          );
+        }
+      }
+      
+      // Configure for faster fix
+      // Low accuracy gets position faster, then we can refine
+      const LocationSettings quickSettings = LocationSettings(
+        accuracy: LocationAccuracy.low, // Fastest fix
+        timeLimit: Duration(seconds: 5), // Quick timeout
       );
       
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: locationSettings,
+      const LocationSettings preciseSettings = LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation, // More accurate
+        timeLimit: Duration(seconds: 10),
       );
       
-      return LocationData(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        timestamp: position.timestamp,
-      );
+      // Try quick fix first
+      try {
+        final quickPosition = await Geolocator.getCurrentPosition(
+          locationSettings: quickSettings,
+        );
+        
+        // Got quick position, update cache
+        _lastKnownPosition = quickPosition;
+        _lastPositionTime = quickPosition.timestamp;
+        
+        developer.log('Got quick GPS fix', name: 'Location');
+        
+        // Return quick position immediately
+        final quickData = LocationData(
+          latitude: quickPosition.latitude,
+          longitude: quickPosition.longitude,
+          timestamp: quickPosition.timestamp,
+        );
+        
+        // Try to get more accurate position in background
+        Geolocator.getCurrentPosition(
+          locationSettings: preciseSettings,
+        ).then((precisePosition) {
+          _lastKnownPosition = precisePosition;
+          _lastPositionTime = precisePosition.timestamp;
+          developer.log('Updated with precise GPS fix', name: 'Location');
+        }).catchError((e) {
+          // Ignore errors for background precise update
+        });
+        
+        return quickData;
+      } catch (e) {
+        // Quick fix failed, try precise
+        developer.log('Quick fix failed, trying precise: $e', name: 'Location');
+        
+        final position = await Geolocator.getCurrentPosition(
+          locationSettings: preciseSettings,
+        );
+        
+        _lastKnownPosition = position;
+        _lastPositionTime = position.timestamp;
+        
+        return LocationData(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          timestamp: position.timestamp,
+        );
+      }
     } catch (e) {
       developer.log('Error getting current location: $e', name: 'Location', error: e);
+      
+      // Last resort: return cached position if available
+      if (_lastKnownPosition != null) {
+        developer.log('Returning cached position as fallback', name: 'Location');
+        return LocationData(
+          latitude: _lastKnownPosition!.latitude,
+          longitude: _lastKnownPosition!.longitude,
+          timestamp: _lastKnownPosition!.timestamp,
+        );
+      }
+      
+      return null;
+    }
+  }
+  
+  Future<LocationData?> getQuickLocation() async {
+    // Optimized method for getting location as fast as possible
+    try {
+      final hasPermission = await checkLocationPermission();
+      if (!hasPermission) return null;
+      
+      // Check cache first
+      if (_lastKnownPosition != null && _lastPositionTime != null) {
+        final age = DateTime.now().difference(_lastPositionTime!);
+        if (age.inSeconds < 30) {
+          developer.log('Using very recent cached position (${age.inSeconds}s old)', name: 'Location');
+          return LocationData(
+            latitude: _lastKnownPosition!.latitude,
+            longitude: _lastKnownPosition!.longitude,
+            timestamp: _lastKnownPosition!.timestamp,
+          );
+        }
+      }
+      
+      // Get last known position from system
+      Position? lastPosition = await Geolocator.getLastKnownPosition();
+      if (lastPosition != null) {
+        return LocationData(
+          latitude: lastPosition.latitude,
+          longitude: lastPosition.longitude,
+          timestamp: lastPosition.timestamp,
+        );
+      }
+      
+      // Fall back to current location with timeout
+      return await getCurrentLocation();
+    } catch (e) {
+      developer.log('Error getting quick location: $e', name: 'Location', error: e);
       return null;
     }
   }
