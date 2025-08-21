@@ -13,7 +13,7 @@
 
 // Pin Definitions
 #define INT1_PIN GPIO_NUM_4     // LSM6DSL interrupt 1
-#define INT2_PIN GPIO_NUM_2     // LSM6DSL interrupt 2
+#define INT2_PIN GPIO_NUM_12     // LSM6DSL interrupt 2
 #define SDA_PIN 21              // I2C data
 #define SCL_PIN 22              // I2C clock
 
