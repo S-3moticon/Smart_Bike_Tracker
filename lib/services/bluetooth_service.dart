@@ -399,27 +399,16 @@ class BikeBluetoothService {
                                 charUuid.contains('1239-0000-1000');
             
             if (isHistoryChar) {
-              developer.log('Found history characteristic! Properties: read=${characteristic.properties.read}, notify=${characteristic.properties.notify}', name: 'BLE-GPSHistory');
-              
-              // Skip notifications for now - just read the value
-              // Notifications were causing timeout issues
-              
               if (!characteristic.properties.read) {
                 developer.log('History characteristic does not support read!', name: 'BLE-GPSHistory');
                 return null;
               }
               
-              // Read the current GPS history
               try {
-                developer.log('Reading characteristic value...', name: 'BLE-GPSHistory');
                 List<int> value = await characteristic.read().timeout(
                   const Duration(seconds: 5),
-                  onTimeout: () {
-                    developer.log('Characteristic read timed out', name: 'BLE-GPSHistory');
-                    throw TimeoutException('Characteristic read timed out');
-                  },
+                  onTimeout: () => throw TimeoutException('Characteristic read timed out'),
                 );
-                developer.log('Read ${value.length} bytes from characteristic', name: 'BLE-GPSHistory');
                 
                 if (value.isEmpty) {
                   developer.log('Characteristic returned empty data', name: 'BLE-GPSHistory');
@@ -427,19 +416,11 @@ class BikeBluetoothService {
                 }
                 
                 String jsonString = String.fromCharCodes(value);
-                developer.log('GPS history raw data (${jsonString.length} chars): $jsonString', name: 'BLE-GPSHistory');
-                
-                // Parse the JSON array
                 final history = _parseGPSHistory(jsonString);
                 
                 if (history != null) {
-                  developer.log('Successfully parsed ${history.length} GPS points', name: 'BLE-GPSHistory');
-                  // Send to stream for UI updates
                   _gpsHistoryController.add(history);
-                } else {
-                  developer.log('Failed to parse GPS history data', name: 'BLE-GPSHistory');
                 }
-                
                 return history;
               } catch (e) {
                 developer.log('Error reading characteristic: $e', name: 'BLE-GPSHistory');
@@ -455,11 +436,7 @@ class BikeBluetoothService {
         }
       }
       
-      developer.log('Bike tracker service not found. Looking for: ${AppConstants.serviceUuid} or 1234', name: 'BLE-GPSHistory');
-      developer.log('Available services:', name: 'BLE-GPSHistory');
-      for (var svc in services) {
-        developer.log('  - ${svc.uuid} (${svc.characteristics.length} characteristics)', name: 'BLE-GPSHistory');
-      }
+      developer.log('Service not found: ${AppConstants.serviceUuid}', name: 'BLE-GPSHistory');
       return null;
     } catch (e) {
       developer.log('Error reading GPS history: $e', name: 'BLE-GPSHistory', error: e);
@@ -469,31 +446,12 @@ class BikeBluetoothService {
   
   List<Map<String, dynamic>>? _parseGPSHistory(String jsonString) {
     try {
-      developer.log('Parsing GPS history JSON (${jsonString.length} chars)...', name: 'BLE-GPSHistory');
+      if (jsonString.trim().isEmpty) return [];
       
-      // Check if the string is empty or just whitespace
-      if (jsonString.trim().isEmpty) {
-        developer.log('Received empty JSON string', name: 'BLE-GPSHistory');
-        return [];
-      }
-      
-      // Log first 200 chars to see what we're getting
-      developer.log('First 200 chars of JSON: ${jsonString.substring(0, jsonString.length > 200 ? 200 : jsonString.length)}', name: 'BLE-GPSHistory');
-      
-      // The MCU sends GPS history as a JSON object with format:
-      // {"history":[{"lat":123.456,"lon":78.910,"time":12345,"src":1}],"count":18}
-      
-      // Use proper JSON decoding
       final dynamic decodedData = json.decode(jsonString);
-      developer.log('JSON decoded successfully. Type: ${decodedData.runtimeType}', name: 'BLE-GPSHistory');
-      
-      if (decodedData is! Map<String, dynamic>) {
-        developer.log('Decoded data is not a Map, it is: ${decodedData.runtimeType}', name: 'BLE-GPSHistory');
-        return [];
-      }
+      if (decodedData is! Map<String, dynamic>) return [];
       
       final Map<String, dynamic> jsonData = decodedData;
-      developer.log('JSON keys: ${jsonData.keys.toList()}', name: 'BLE-GPSHistory');
       
       // Extract the history array
       if (!jsonData.containsKey('history')) {
@@ -747,13 +705,12 @@ class BikeBluetoothService {
                 // Listen for status updates
                 _statusSubscription = characteristic.onValueReceived.listen((value) {
                   final jsonString = String.fromCharCodes(value);
-                  developer.log('Status update received: $jsonString', name: 'BLE-Status');
                   
                   try {
-                    // Parse JSON manually
                     final statusData = _parseStatusJson(jsonString);
+                    // Immediately broadcast the update
                     _deviceStatusController.add(statusData);
-                    developer.log('Status parsed: $statusData', name: 'BLE-Status');
+                    developer.log('IR Status: user_present=${statusData['user'] ?? statusData['user_present']}', name: 'BLE-Status');
                   } catch (e) {
                     developer.log('Error parsing status: $e', name: 'BLE-Status');
                   }
@@ -761,8 +718,11 @@ class BikeBluetoothService {
                 
                 developer.log('Subscribed to status notifications', name: 'BLE-Status');
                 
-                // Also read the current value
-                await readDeviceStatus();
+                // Read current value and broadcast it
+                final currentStatus = await readDeviceStatus();
+                if (currentStatus != null) {
+                  _deviceStatusController.add(currentStatus);
+                }
                 
                 return true;
               } else {
@@ -873,8 +833,10 @@ class BikeBluetoothService {
     // Extract user_present (IR sensor) - check both "user_present" and "user" keys
     if (jsonString.contains('"user_present":')) {
       result['user_present'] = jsonString.contains('"user_present":true');
+      result['user'] = result['user_present']; // Add both keys for compatibility
     } else if (jsonString.contains('"user":')) {
-      result['user_present'] = jsonString.contains('"user":true');
+      result['user'] = jsonString.contains('"user":true');
+      result['user_present'] = result['user']; // Add both keys for compatibility
     }
     
     // Extract device mode (READY, AWAY, DISCONNECTED)

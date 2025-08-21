@@ -20,42 +20,36 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
   void initState() {
     super.initState();
     _subscribeToStatus();
-    // Immediate status request for faster initial display
-    _refreshStatus(); // Initial read
-    // Request status again after a short delay to ensure we get the latest
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) _refreshStatus();
-    });
+    // Only do initial refresh, rely on stream for updates
+    _refreshStatus();
   }
   
   void _subscribeToStatus() {
     _statusSubscription = _bleService.deviceStatus.listen((status) {
-      setState(() {
-        _deviceStatus = status;
-      });
-      developer.log('Status updated in UI: $status', name: 'DeviceStatus');
+      if (mounted) {
+        setState(() {
+          _deviceStatus = status;
+          _isRefreshing = false; // Clear refreshing state on new data
+        });
+      }
     });
   }
   
   Future<void> _refreshStatus() async {
-    setState(() {
-      _isRefreshing = true;
-    });
+    if (!mounted) return;
+    
+    setState(() => _isRefreshing = true);
     
     try {
       final status = await _bleService.readDeviceStatus();
       if (mounted && status != null) {
-        setState(() {
-          _deviceStatus = status;
-        });
+        setState(() => _deviceStatus = status);
       }
     } catch (e) {
       developer.log('Error refreshing status: $e', name: 'DeviceStatus');
     } finally {
       if (mounted) {
-        setState(() {
-          _isRefreshing = false;
-        });
+        setState(() => _isRefreshing = false);
       }
     }
   }
@@ -166,8 +160,8 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
               _buildStatusItem(
                 icon: Icons.person_outline,
                 label: 'User Presence (IR)',
-                value: _deviceStatus!['user_present'] == true ? 'Detected' : 'Not Detected',
-                valueColor: _deviceStatus!['user_present'] == true 
+                value: (_deviceStatus!['user'] ?? _deviceStatus!['user_present']) == true ? 'Detected' : 'Not Detected',
+                valueColor: (_deviceStatus!['user'] ?? _deviceStatus!['user_present']) == true 
                   ? theme.colorScheme.primary 
                   : Colors.orange,
               ),

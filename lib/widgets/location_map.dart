@@ -40,9 +40,8 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   bool _useOfflineMode = false;
   Map<String, dynamic>? _offlineMapInfo;
   
-  // Tile layer options
   int _selectedTileLayer = 0;
-  final List<Map<String, String>> _tileLayers = [
+  static const List<Map<String, String>> _tileLayers = [
     {
       'name': 'OpenStreetMap',
       'url': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',

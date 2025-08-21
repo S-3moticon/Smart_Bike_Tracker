@@ -50,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Device status tracking
   Map<String, dynamic>? _currentDeviceStatus;
   
+  
   // Tab controller for map/list/mcu view
   late TabController _tabController;
   
@@ -198,7 +199,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _currentDeviceStatus = status;
       });
-      developer.log('Device status updated: phone_configured=${status['phone_configured']}, alerts=${status['alerts']}', name: 'HomeScreen');
+      developer.log('Status update: user=${status['user'] ?? status['user_present']}, mode=${status['mode']}', name: 'HomeScreen');
     });
     
     // Listen to Bluetooth adapter state changes
@@ -267,8 +268,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
     
     // Check Bluetooth availability
-    final available = await _bleService.checkBluetoothAvailability();
-    if (!available) {
+    if (!await _bleService.checkBluetoothAvailability()) {
       developer.log('Bluetooth not available for auto-connect', name: 'HomeScreen');
       return;
     }
@@ -295,8 +295,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   Future<void> _checkBluetoothAndScan() async {
-    final available = await _bleService.checkBluetoothAvailability();
-    if (available && _connectionState != BluetoothConnectionState.connected) {
+    if (await _bleService.checkBluetoothAvailability() && 
+        _connectionState != BluetoothConnectionState.connected) {
       _startScan();
     }
   }
@@ -628,9 +628,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   ElevatedButton(
-                    onPressed: () {
-                      FlutterBluePlus.turnOn();
-                    },
+                    onPressed: () => FlutterBluePlus.turnOn(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.colorScheme.error,
                       foregroundColor: theme.colorScheme.onError,
@@ -645,26 +643,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
     
-    String statusText;
-    IconData statusIcon;
-    Color statusColor;
+    late final String statusText;
+    late final IconData statusIcon;
+    late final Color statusColor;
     
     if (_isAutoConnecting) {
       statusText = 'Auto-connecting...';
       statusIcon = Icons.bluetooth_searching;
       statusColor = theme.colorScheme.secondary;
+    } else if (_connectionState == BluetoothConnectionState.connected) {
+      statusText = 'Connected';
+      statusIcon = Icons.bluetooth_connected;
+      statusColor = theme.colorScheme.primary;
     } else {
-      switch (_connectionState) {
-        case BluetoothConnectionState.connected:
-          statusText = 'Connected';
-          statusIcon = Icons.bluetooth_connected;
-          statusColor = theme.colorScheme.primary;
-          break;
-        default:
-          statusText = 'Disconnected';
-          statusIcon = Icons.bluetooth_disabled;
-          statusColor = theme.colorScheme.error;
-      }
+      statusText = 'Disconnected';
+      statusIcon = Icons.bluetooth_disabled;
+      statusColor = theme.colorScheme.error;
     }
     
     return Card(
