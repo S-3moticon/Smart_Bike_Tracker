@@ -278,10 +278,13 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
     return false;
   }
   
-  // CRITICAL: Disable GPS before SMS (SIM7070G shares RF pins between GPS and LTE)
-  Serial.println("🛰️ Disabling GPS for SMS operation...");
+  // CRITICAL: Enable RF for SMS operation (GPS and SMS share RF)
+  // First disable GPS if it was on
   disableGNSSPower();
-  delay(2000);  // Reduced delay for faster SMS
+  delay(500);
+  // Then enable RF for SMS
+  enableRF();
+  delay(1000);  // Let RF stabilize
   
   // First message: geo URI only
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
@@ -312,7 +315,13 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
   }
   
   // Use the optimized SMS pair function
-  return sendSMSPair(phoneNumber, firstMessage, secondMessage);
+  bool result = sendSMSPair(phoneNumber, firstMessage, secondMessage);
+  
+  // After SMS, disable RF to save power
+  Serial.println("📡 Disabling RF after SMS...");
+  disableRF();
+  
+  return result;
 }
 
 /*
@@ -325,10 +334,13 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
     return false;
   }
   
-  // CRITICAL: Disable GPS before SMS (SIM7070G shares RF pins between GPS and LTE)
-  Serial.println("🛰️ Disabling GPS for SMS operation...");
+  // CRITICAL: Enable RF for SMS operation (GPS and SMS share RF)
+  // First disable GPS if it was on
   disableGNSSPower();
-  delay(2000);  // Reduced delay for faster SMS
+  delay(500);
+  // Then enable RF for SMS
+  enableRF();
+  delay(1000);  // Let RF stabilize
   
   // First message: geo URI only
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
@@ -349,7 +361,13 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
   secondMessage += " sec";
   
   // Use the optimized SMS pair function
-  return sendSMSPair(phoneNumber, firstMessage, secondMessage);
+  bool result = sendSMSPair(phoneNumber, firstMessage, secondMessage);
+  
+  // After SMS, disable RF to save power
+  Serial.println("📡 Disabling RF after SMS...");
+  disableRF();
+  
+  return result;
 }
 
 /*
@@ -362,7 +380,16 @@ bool sendTestSMS(const String& phoneNumber) {
   message += String(millis() / 1000);
   message += " seconds since boot";
   
-  return sendSMS(phoneNumber, message);
+  // Enable RF for SMS
+  enableRF();
+  delay(1000);
+  
+  bool result = sendSMS(phoneNumber, message);
+  
+  // Disable RF after SMS to save power
+  disableRF();
+  
+  return result;
 }
 
 /*

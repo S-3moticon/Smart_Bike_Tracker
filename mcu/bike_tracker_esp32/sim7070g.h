@@ -34,6 +34,8 @@ bool resetModule();
 // Power management
 bool enableGNSSPower();
 bool disableGNSSPower();
+bool disableRF();  // Turn off RF with AT+CFUN=0
+bool enableRF();   // Turn on RF with AT+CFUN=1
 
 // Utility functions
 void clearSerialBuffer();

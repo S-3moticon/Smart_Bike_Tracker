@@ -198,3 +198,47 @@ bool resetModule() {
   
   return false;
 }
+
+/*
+ * Disable RF functionality (AT+CFUN=0)
+ * This turns off all RF circuits to save power
+ */
+bool disableRF() {
+  Serial.println("📡 Disabling RF (AT+CFUN=0)...");
+  bool result = sendATCommand("AT+CFUN=0", "OK", 5000);
+  if (result) {
+    Serial.println("✅ RF disabled - minimum power mode");
+    delay(1000);  // Let module stabilize
+  } else {
+    Serial.println("❌ Failed to disable RF");
+  }
+  return result;
+}
+
+/*
+ * Enable RF functionality (AT+CFUN=1)
+ * This turns on RF circuits for normal operation
+ */
+bool enableRF() {
+  Serial.println("📡 Enabling RF (AT+CFUN=1)...");
+  bool result = sendATCommand("AT+CFUN=1", "OK", 10000);
+  if (result) {
+    Serial.println("✅ RF enabled - full functionality");
+    delay(2000);  // Wait for RF to stabilize
+    
+    // Wait for network registration after enabling RF
+    int attempts = 0;
+    while (attempts < 10) {
+      if (sendATCommand("AT+CREG?", "0,1", 2000) || 
+          sendATCommand("AT+CREG?", "0,5", 2000)) {
+        Serial.println("✅ Network registered after RF enable");
+        break;
+      }
+      delay(1000);
+      attempts++;
+    }
+  } else {
+    Serial.println("❌ Failed to enable RF");
+  }
+  return result;
+}

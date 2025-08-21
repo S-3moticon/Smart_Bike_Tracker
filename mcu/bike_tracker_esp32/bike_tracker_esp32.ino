@@ -57,11 +57,6 @@ unsigned long lastMotionTime = 0;
 unsigned long lastSMSTime = 0;
 bool inSleepMode = false;
 
-// IR Sensor Interrupt Variables (for optimal performance)
-volatile bool irStateChanged = false;
-volatile unsigned long lastIRChange = 0;
-const unsigned long IR_DEBOUNCE_TIME = 50;  // 50ms debounce time
-
 // SMS tracking variables (need to be global for deep sleep wake)
 RTC_DATA_ATTR bool disconnectSMSSent = false;  // Preserved across deep sleep
 RTC_DATA_ATTR unsigned long lastDisconnectSMS = 0;  // Preserved across deep sleep
@@ -69,6 +64,7 @@ RTC_DATA_ATTR bool isTimerWake = false;  // Track if we woke from timer
 RTC_DATA_ATTR bool firstDisconnectLogged = false;  // Track if first disconnect message shown
 RTC_DATA_ATTR bool hasValidConfig = false;  // Track if we have valid config on boot
 RTC_DATA_ATTR bool motionWakeNeedsSMS = false;  // Track if we need to send SMS after motion wake
+RTC_DATA_ATTR bool motionSensorInitialized = false;  // Track if motion sensor is initialized
 
 // Grace period for BLE connection on boot
 #define BOOT_BLE_GRACE_PERIOD 30000  // 30 seconds grace period for BLE connection
@@ -81,16 +77,6 @@ void clearConfiguration();
 void updateStatusCharacteristic();
 void testGPSAndSMS();
 void syncGPSHistory();
-
-// IR Sensor Interrupt Handler
-void IRAM_ATTR handleIRChange() {
-  unsigned long currentTime = millis();
-  // Debounce check
-  if (currentTime - lastIRChange > IR_DEBOUNCE_TIME) {
-    irStateChanged = true;
-    lastIRChange = currentTime;
-  }
-}
 
 // ============================================================================
 // BLE Server Callbacks
@@ -442,10 +428,13 @@ void setup() {
   } else if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
     Serial.println("⏰ Woken by timer from deep sleep");
     // Timer wake means we need to send next SMS
-    // disconnectSMSSent is already preserved via RTC_DATA_ATTR
+    // Flags should already be preserved via RTC_DATA_ATTR
     isTimerWake = true;  // Mark that we woke from timer
     // Set lastDisconnectSMS to 0 to trigger immediate SMS send
     lastDisconnectSMS = 0;
+    // Ensure flags are preserved from before deep sleep
+    // disconnectSMSSent should be true
+    // firstDisconnectLogged should be true
   } else {
     Serial.println("🔄 Normal boot (not wake from sleep)");
     // Reset persistent variables on normal boot
@@ -454,6 +443,7 @@ void setup() {
     isTimerWake = false;
     firstDisconnectLogged = false;
     motionWakeNeedsSMS = false;
+    motionSensorInitialized = false;
   }
   
   // Initialize hardware
@@ -462,9 +452,6 @@ void setup() {
   status.userPresent = false;
   status.deviceMode = "DISCONNECTED";
   status.lastGPSTime = 0;
-  
-  // Attach interrupt for IR sensor (optimal performance)
-  attachInterrupt(digitalPinToInterrupt(IR_SENSOR_PIN), handleIRChange, CHANGE);
   
   // Load configuration first
   loadConfiguration();
@@ -517,8 +504,10 @@ void setup() {
     if (motionSensor.begin()) {
       Serial.println("✅ LSM6DSL initialized");
       lastMotionTime = millis();
+      motionSensorInitialized = true;
     } else {
       Serial.println("⚠️ LSM6DSL not found - motion detection disabled");
+      motionSensorInitialized = false;
     }
     
     // Initialize SIM7070G
@@ -655,14 +644,33 @@ void loop() {
     // BLE just disconnected
     Serial.println("🔴 BLE Disconnected - Preparing for SMS mode");
     
+    // Initialize motion sensor if not already initialized
+    if (!motionSensorInitialized) {
+      Serial.println("🔄 Initializing LSM6DSL for disconnect handling...");
+      if (motionSensor.begin()) {
+        Serial.println("✅ LSM6DSL initialized");
+        motionSensorInitialized = true;
+      } else {
+        Serial.println("⚠️ LSM6DSL initialization failed");
+        motionSensorInitialized = false;
+      }
+    }
+    
     delay(500);
     pServer->startAdvertising();
     oldDeviceConnected = deviceConnected;
-    disconnectSMSSent = false;  // Reset flag for new disconnection
-    lastDisconnectSMS = 0;  // Reset timer
-    motionWakeNeedsSMS = false;  // Reset motion wake flag
-    motionSensor.setNormalMode();  // Enable motion detection
-    motionSensor.resetMotionReference();
+    
+    // Only reset these flags if we haven't sent first SMS yet
+    if (!disconnectSMSSent) {
+      lastDisconnectSMS = 0;  // Reset timer
+      motionWakeNeedsSMS = false;  // Reset motion wake flag
+    }
+    
+    // Set motion sensor to normal mode if initialized
+    if (motionSensorInitialized) {
+      motionSensor.setNormalMode();  // Enable motion detection
+      motionSensor.resetMotionReference();
+    }
     lastMotionTime = millis();
     inSleepMode = false;
   }
@@ -671,9 +679,33 @@ void loop() {
     // BLE just connected
     Serial.println("🟢 BLE Connected - Disabling motion detection");
     oldDeviceConnected = deviceConnected;
-    disconnectSMSSent = false;  // Reset flag when reconnected
+    
+    // Initialize motion sensor FIRST if not already initialized (timer wake scenario)
+    if (!motionSensorInitialized) {
+      Serial.println("🔄 Initializing LSM6DSL on BLE connection...");
+      if (motionSensor.begin()) {
+        Serial.println("✅ LSM6DSL initialized");
+        motionSensorInitialized = true;
+        lastMotionTime = millis();
+      } else {
+        Serial.println("⚠️ LSM6DSL initialization failed");
+        motionSensorInitialized = false;
+      }
+    }
+    
+    // Only reset SMS flags if this is a normal connection (not from timer wake)
+    if (!isTimerWake) {
+      disconnectSMSSent = false;  // Reset flag for fresh start
+      firstDisconnectLogged = false;  // Reset for fresh start
+    }
+    // If from timer wake, preserve the SMS cycle state
+    
     updateStatusCharacteristic();
-    motionSensor.setLowPowerMode();  // Put sensor in low power
+    
+    // Put motion sensor in low power if initialized
+    if (motionSensorInitialized) {
+      motionSensor.setLowPowerMode();  // Put sensor in low power
+    }
     inSleepMode = false;
   }
   
@@ -681,14 +713,29 @@ void loop() {
   if (deviceConnected) {
     // Keep LSM6DSL in low power mode to save battery
     static bool powerOptimized = false;
+    static unsigned long connectionStableTime = 0;
+    
     if (!powerOptimized) {
-      motionSensor.setLowPowerMode();
+      // Only set motion sensor to low power if initialized
+      if (motionSensorInitialized) {
+        motionSensor.setLowPowerMode();
+        Serial.println("  • LSM6DSL in low power mode");
+      }
       // Put SIM7070G in power saving mode when BLE connected
       sendATCommand("AT+CPSMS=1", "OK");  // Enable power saving mode
       Serial.println("📉 BLE Connected - Power optimization enabled");
-      Serial.println("  • LSM6DSL in low power mode");
       Serial.println("  • SIM7070G in power saving mode");
       powerOptimized = true;
+      connectionStableTime = millis();
+    }
+    
+    // After stable connection for 60 seconds, reset SMS cycle flags
+    // This allows fresh start after user has been connected for a while
+    if (isTimerWake && (millis() - connectionStableTime > 60000)) {
+      Serial.println("📲 Stable connection achieved - resetting SMS cycle");
+      isTimerWake = false;
+      disconnectSMSSent = false;
+      firstDisconnectLogged = false;
     }
     
     // Reset flag when disconnected
@@ -709,13 +756,19 @@ void loop() {
     if (motionWakeNeedsSMS) {
       Serial.println("\n📱 Motion wake detected - Sending initial SMS now...");
       
-      // Always get fresh GPS for accurate tracking
-      Serial.println("🛰️ Acquiring fresh GPS fix...");
-      bool gpsAcquired = acquireGPSFix(currentGPS, 30);
-      if (gpsAcquired) {
-        status.lastGPSTime = currentTime;
-        saveGPSData(currentGPS);
-        logGPSPoint(currentGPS, 2);
+      // Try to get current GPS location
+      bool gpsAcquired = false;
+      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {
+        Serial.println("🛰️ Acquiring fresh GPS fix...");
+        gpsAcquired = acquireGPSFix(currentGPS, 30);
+        if (gpsAcquired) {
+          status.lastGPSTime = currentTime;
+          saveGPSData(currentGPS);
+          logGPSPoint(currentGPS, 2);
+        }
+      } else {
+        Serial.println("📍 Using cached GPS location");
+        gpsAcquired = true;
       }
       
       // Send SMS with location
@@ -751,9 +804,9 @@ void loop() {
       }
     }
     
-    // Check for motion (skip during timer wake)
+    // Check for motion (skip during timer wake or if sensor not initialized)
     bool motion = false;
-    if (!isTimerWake) {
+    if (!isTimerWake && motionSensorInitialized) {
       motion = motionSensor.detectMotion();
       
       if (motion) {
@@ -782,60 +835,60 @@ void loop() {
     }
     
     if (shouldSendSMS) {
-      // Double-check alerts are still enabled before sending
-      if (!config.alertEnabled) {
-        Serial.println("⚠️ Alerts disabled - skipping SMS");
-        disconnectSMSSent = true;  // Mark as handled to prevent repeated checks
-        lastDisconnectSMS = currentTime;
-      } else {
-        // Always get fresh GPS for accurate tracking
+      
+      // Try to get current GPS location
+      bool gpsAcquired = false;
+      if (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) {  // If no GPS or older than 5 minutes
         Serial.println("🛰️ Acquiring fresh GPS fix...");
-        bool gpsAcquired = acquireGPSFix(currentGPS, 30);  // Try for 30 seconds
+        gpsAcquired = acquireGPSFix(currentGPS, 30);  // Try for 30 seconds
         if (gpsAcquired) {
           status.lastGPSTime = currentTime;
           saveGPSData(currentGPS);
           logGPSPoint(currentGPS, 2);  // Type 2 for disconnect event
         }
-        
-        // Send SMS with location (current or last known)
-        if (gpsAcquired || currentGPS.valid) {
-          if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
-            Serial.println("✅ Location SMS sent successfully!");
-            disconnectSMSSent = true;
-            lastDisconnectSMS = currentTime;
-            lastSMSTime = currentTime;
-          } else {
-            Serial.println("❌ Failed to send location SMS");
-          }
+      } else {
+        Serial.println("📍 Using cached GPS location");
+        gpsAcquired = true;
+      }
+      
+      // Send SMS with location (current or last known)
+      if (gpsAcquired || currentGPS.valid) {
+        if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
+          Serial.println("✅ Location SMS sent successfully!");
+          disconnectSMSSent = true;
+          lastDisconnectSMS = currentTime;
+          lastSMSTime = currentTime;
         } else {
-          // No GPS available, send simple notification
-          String message = "Bike Tracker Alert\n\n";
-          message += "GPS location unavailable\n";
-          message += "Last known location may be outdated\n\n";
-          message += "Device Status\n";
-          message += "User: ";
-          message += status.userPresent ? "Present" : "Away";
-          message += "\n";
-          message += "SMS Interval: ";
-          message += String(config.updateInterval);
-          message += " seconds";
-          
-          if (sendSMS(config.phoneNumber, message)) {
-            Serial.println("✅ Alert SMS sent (no GPS)");
-            disconnectSMSSent = true;
-            lastDisconnectSMS = currentTime;
-            lastSMSTime = currentTime;
-          } else {
-            Serial.println("❌ Failed to send alert SMS");
-          }
+          Serial.println("❌ Failed to send location SMS");
+        }
+      } else {
+        // No GPS available, send simple notification
+        String message = "Bike Tracker Alert\n\n";
+        message += "GPS location unavailable\n";
+        message += "Last known location may be outdated\n\n";
+        message += "Device Status\n";
+        message += "User: ";
+        message += status.userPresent ? "Present" : "Away";
+        message += "\n";
+        message += "SMS Interval: ";
+        message += String(config.updateInterval);
+        message += " seconds";
+        
+        if (sendSMS(config.phoneNumber, message)) {
+          Serial.println("✅ Alert SMS sent (no GPS)");
+          disconnectSMSSent = true;
+          lastDisconnectSMS = currentTime;
+          lastSMSTime = currentTime;
+        } else {
+          Serial.println("❌ Failed to send alert SMS");
         }
       }
     }
     
-    // Sleep management when disconnected (skip if actively handling timer wake or grace period)
-    // Also skip if we're in timer wake mode (motion sensor not initialized)
+    // Sleep management when disconnected (skip during timer wake or grace period)
+    // Also skip if motion sensor not initialized
     if (!isTimerWake && !gracePeriodActive && !motion && !inSleepMode && 
-        motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
+        motionSensorInitialized && motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
       Serial.println("😴 No motion for 10 seconds - Preparing for sleep...");
       
       // Configure wake sources based on whether first SMS has been sent
@@ -846,19 +899,23 @@ void loop() {
           firstDisconnectLogged = true;  // Only log this once
         }
         
-        // Configure motion wake
-        motionSensor.configureWakeOnMotion();
-        
-        // IMPORTANT: Clear any pending interrupts before enabling wake
-        delay(100);
-        motionSensor.clearMotionInterrupts();
-        delay(100);
-        
-        // Check interrupt pins are LOW before sleep
-        if (digitalRead(INT1_PIN) == HIGH || digitalRead(INT2_PIN) == HIGH) {
-          Serial.println("⚠️ Interrupt pins still HIGH, clearing again...");
+        // Configure motion wake only if sensor is initialized
+        if (motionSensorInitialized) {
+          motionSensor.configureWakeOnMotion();
+          
+          // IMPORTANT: Clear any pending interrupts before enabling wake
+          delay(100);
           motionSensor.clearMotionInterrupts();
-          delay(200);
+          delay(100);
+          
+          // Check interrupt pins are LOW before sleep
+          if (digitalRead(INT1_PIN) == HIGH || digitalRead(INT2_PIN) == HIGH) {
+            Serial.println("⚠️ Interrupt pins still HIGH, clearing again...");
+            motionSensor.clearMotionInterrupts();
+            delay(200);
+          }
+        } else {
+          Serial.println("⚠️ Motion sensor not initialized - skipping wake configuration");
         }
         
         // Disable all wake sources first
@@ -878,7 +935,9 @@ void loop() {
         esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
         
         // Disable motion sensor interrupts completely before deep sleep
-        motionSensor.setPowerDownMode();  // Power down the sensor
+        if (motionSensorInitialized) {
+          motionSensor.setPowerDownMode();  // Power down the sensor
+        }
         
         // Make sure interrupt pins are not floating
         pinMode(INT1_PIN, INPUT_PULLDOWN);  // Pull down to prevent false triggers
@@ -922,22 +981,26 @@ void loop() {
         } else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
           Serial.println("🚨 Wake interrupt triggered");
           
-          // Clear interrupts first
-          motionSensor.clearMotionInterrupts();
-          delay(100);
+          // Clear interrupts first (only if sensor initialized)
+          if (motionSensorInitialized) {
+            motionSensor.clearMotionInterrupts();
+            delay(100);
+          }
           
           // Validate motion by checking actual sensor data
           bool realMotion = false;
-          for (int i = 0; i < 5; i++) {
-            float delta = motionSensor.getMotionDelta();
-            if (delta > MOTION_THRESHOLD_LOW) {
-              Serial.print("Motion detected! Delta: ");
-              Serial.print(delta);
-              Serial.println("g");
-              realMotion = true;
-              break;
+          if (motionSensorInitialized) {
+            for (int i = 0; i < 5; i++) {
+              float delta = motionSensor.getMotionDelta();
+              if (delta > MOTION_THRESHOLD_LOW) {
+                Serial.print("Motion detected! Delta: ");
+                Serial.print(delta);
+                Serial.println("g");
+                realMotion = true;
+                break;
+              }
+              delay(50);
             }
-            delay(50);
           }
           
           if (realMotion) {
@@ -1094,29 +1157,10 @@ void loop() {
     }
   }
   
-  // Periodic status update (every 1 second when connected for faster IR sensor updates)
-  if (deviceConnected && (millis() - lastStatusUpdate > 1000)) {
+  // Periodic status update (every 10 seconds when connected)
+  if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
     lastStatusUpdate = millis();
     updateStatusCharacteristic();
-  }
-  
-  // IR sensor change detection for immediate updates
-  // Method 1: Polling-based detection (backup for non-interrupt compatible pins)
-  if (deviceConnected) {
-    bool currentUserPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
-    if (currentUserPresent != lastUserPresent) {
-      lastUserPresent = currentUserPresent;
-      Serial.print("👤 IR Sensor Change Detected (Poll): User ");
-      Serial.println(currentUserPresent ? "Present" : "Away");
-      updateStatusCharacteristic();  // Send immediate update
-    }
-  }
-  
-  // Method 2: Interrupt-based detection (optimal performance)
-  if (irStateChanged && deviceConnected) {
-    irStateChanged = false;  // Clear the flag
-    Serial.println("⚡ IR Sensor Interrupt Triggered - Updating Status");
-    updateStatusCharacteristic();  // Send immediate update
   }
   
   delay(10);

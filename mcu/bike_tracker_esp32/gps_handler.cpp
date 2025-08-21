@@ -80,9 +80,16 @@ uint64_t parseGPSDateTimeToUnixMillis(const String& datetime) {
  * Returns true when valid fix is obtained
  */
 bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
+  // First disable RF to prepare for GPS operation
+  Serial.println("📡 Switching to GPS mode...");
+  disableRF();
+  delay(500);
+  
   // Enable GPS (module should already be initialized)
   if (!enableGNSSPower()) {
     Serial.println("❌ Failed to enable GPS");
+    // Re-enable RF on failure
+    enableRF();
     return false;
   }
   
@@ -109,6 +116,11 @@ bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
       delay(2000);  // Wait before next attempt
     }
   }
+  
+  // After GPS operation, disable GPS and re-enable RF for normal operation
+  disableGNSSPower();
+  delay(500);
+  enableRF();
   
   return fixAcquired;
 }
