@@ -71,6 +71,7 @@ void clearConfiguration();
 void updateStatusCharacteristic();
 void testGPSAndSMS();
 void syncGPSHistory();
+void readSensors();
 
 // ============================================================================
 // BLE Server Callbacks
@@ -80,6 +81,10 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = true;
       status.bleConnected = true;
       Serial.println("✅ BLE Client Connected");
+      
+      // Force sensor update on connection
+      readSensors();
+      updateStatusCharacteristic();
       
       // Sync GPS history when device reconnects
       delay(1000);  // Give BLE time to stabilize
@@ -219,14 +224,16 @@ void clearConfiguration() {
 // ============================================================================
 void readSensors() {
   // Store previous state for change detection
-  static bool previousUserPresent = false;
+  static int previousUserPresent = -1;  // Initialize to -1 to force first update
+  static bool forceUpdate = true;       // Force update on first read or after connection
   
   // Read IR sensor (HW-201) - LOW when human detected, HIGH when no detection
   status.userPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
   
-  // Check if IR sensor state changed
-  if (status.userPresent != previousUserPresent) {
-    previousUserPresent = status.userPresent;
+  // Check if IR sensor state changed or force update is needed
+  if (forceUpdate || (previousUserPresent != -1 && status.userPresent != (bool)previousUserPresent)) {
+    previousUserPresent = status.userPresent ? 1 : 0;
+    forceUpdate = false;
     Serial.print("👤 IR Sensor: User ");
     Serial.println(status.userPresent ? "Detected" : "Away");
     

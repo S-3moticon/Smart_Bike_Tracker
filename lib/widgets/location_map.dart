@@ -15,6 +15,8 @@ class LocationMap extends StatefulWidget {
   final LocationData? currentLocation;
   final bool isTracking;
   final List<Map<String, dynamic>>? mcuGpsPoints;
+  final LatLng? selectedLocation;
+  final VoidCallback? onLocationSelected;
   
   const LocationMap({
     super.key,
@@ -22,6 +24,8 @@ class LocationMap extends StatefulWidget {
     this.currentLocation,
     required this.isTracking,
     this.mcuGpsPoints,
+    this.selectedLocation,
+    this.onLocationSelected,
   });
   
   @override
@@ -175,6 +179,14 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   void didUpdateWidget(LocationMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     
+    // Check if a location was selected from history
+    if (widget.selectedLocation != null && 
+        widget.selectedLocation != oldWidget.selectedLocation) {
+      _navigateToLocation(widget.selectedLocation!);
+      // Call the callback to clear the selected location
+      widget.onLocationSelected?.call();
+    }
+    
     // Auto-center on first location received
     if (!_hasInitiallyMoved && widget.currentLocation != null && oldWidget.currentLocation == null) {
       _center = LatLng(
@@ -197,6 +209,16 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
         );
       });
     }
+  }
+  
+  void _navigateToLocation(LatLng location) {
+    // Animate to the selected location with higher zoom
+    _mapController.move(location, 18.0);
+    setState(() {
+      _center = location;
+      _zoom = 18.0;
+    });
+    developer.log('Navigated to location: ${location.latitude}, ${location.longitude}', name: 'LocationMap');
   }
   
   List<Marker> _buildMarkers() {

@@ -50,6 +50,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Device status tracking
   Map<String, dynamic>? _currentDeviceStatus;
   
+  // Selected location for map navigation
+  LatLng? _selectedMapLocation;
   
   // Tab controller for map/list/mcu view
   late TabController _tabController;
@@ -1004,6 +1006,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           currentLocation: _currentLocation,
                           isTracking: _isTrackingLocation,
                           mcuGpsPoints: _mcuGpsHistory,
+                          selectedLocation: _selectedMapLocation,
+                          onLocationSelected: () {
+                            // Clear the selected location after navigating
+                            setState(() {
+                              _selectedMapLocation = null;
+                            });
+                          },
                         ),
                         // List View - wrapped in builder to maintain state
                         Builder(
@@ -1063,8 +1072,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 final location = _locationHistory[index];
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 8),
-                                  child: ListTile(
-                                    onTap: () => _copyLocationToClipboard(location),
+                                  elevation: 2,
+                                  child: InkWell(
+                                    onTap: () => _navigateToLocationOnMap(location),
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: ListTile(
                                 leading: CircleAvatar(
                                   backgroundColor: theme.colorScheme.primaryContainer,
                                   child: Text(
@@ -1124,23 +1136,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     ),
                                   ],
                                 ),
-                                trailing: index == 0
-                                  ? Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: theme.colorScheme.primary,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        'Latest',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: theme.colorScheme.onPrimary,
-                                          fontWeight: FontWeight.bold,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.map,
+                                      color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                                      size: 20,
+                                    ),
+                                    if (index == 0) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.primary,
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          'Latest',
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            color: theme.colorScheme.onPrimary,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
-                                    )
-                                  : null,
+                                    ],
+                                  ],
+                                ),
                               ),
+                                  ),
                                 );
                               },
                             ),
@@ -1217,18 +1241,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   
                                   return Card(
                                     margin: const EdgeInsets.only(bottom: 8),
-                                    child: ListTile(
-                                      onTap: () {
-                                        final lat = point['latitude'] ?? 0;
-                                        final lng = point['longitude'] ?? 0;
-                                        Clipboard.setData(ClipboardData(text: '$lat, $lng'));
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('Coordinates copied to clipboard'),
-                                            duration: Duration(seconds: 1),
-                                          ),
-                                        );
-                                      },
+                                    elevation: 2,
+                                    child: InkWell(
+                                      onTap: () => _navigateToGpsPointOnMap(point),
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: ListTile(
                                       leading: CircleAvatar(
                                         backgroundColor: theme.colorScheme.secondaryContainer,
                                         child: Text(
@@ -1293,22 +1310,34 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                           ),
                                         ],
                                       ),
-                                      trailing: index == 0
-                                        ? Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: theme.colorScheme.secondary,
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              'Latest',
-                                              style: theme.textTheme.bodySmall?.copyWith(
-                                                color: theme.colorScheme.onSecondary,
-                                                fontWeight: FontWeight.bold,
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.map,
+                                            color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                                            size: 20,
+                                          ),
+                                          if (index == 0) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: theme.colorScheme.secondary,
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: Text(
+                                                'Latest',
+                                                style: theme.textTheme.bodySmall?.copyWith(
+                                                  color: theme.colorScheme.onSecondary,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
                                               ),
                                             ),
-                                          )
-                                        : null,
+                                          ],
+                                        ],
+                                      ),
+                                    ),
                                     ),
                                   );
                                 },
@@ -1331,6 +1360,81 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
   
+  void _navigateToLocationOnMap(LocationData location) {
+    // Switch to map tab
+    _tabController.animateTo(0);
+    
+    // Call the map widget to zoom to this location
+    // We'll need to pass this location to the map widget
+    setState(() {
+      _selectedMapLocation = LatLng(location.latitude, location.longitude);
+    });
+    
+    // Show a snackbar with location details
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Showing location from ${location.formattedDate} ${location.formattedTimestamp}'),
+        duration: const Duration(seconds: 2),
+        action: SnackBarAction(
+          label: 'Copy',
+          onPressed: () {
+            final coordinates = '${location.latitude}, ${location.longitude}';
+            Clipboard.setData(ClipboardData(text: coordinates));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Copied: $coordinates'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+  
+  void _navigateToGpsPointOnMap(Map<String, dynamic> point) {
+    // Extract coordinates
+    final lat = (point['latitude'] ?? 0).toDouble();
+    final lng = (point['longitude'] ?? 0).toDouble();
+    final timestamp = point['timestamp'] ?? 0;
+    
+    // Switch to map tab
+    _tabController.animateTo(0);
+    
+    // Navigate to this GPS point on the map
+    setState(() {
+      _selectedMapLocation = LatLng(lat, lng);
+    });
+    
+    // Format timestamp for display
+    final date = timestamp > 0 
+      ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+      : DateTime.now();
+    final formattedDate = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    final formattedTime = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
+    
+    // Show a snackbar with GPS point details
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Showing GPS point from $formattedDate $formattedTime'),
+        duration: const Duration(seconds: 2),
+        action: SnackBarAction(
+          label: 'Copy',
+          onPressed: () {
+            final coordinates = '$lat, $lng';
+            Clipboard.setData(ClipboardData(text: coordinates));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Copied: $coordinates'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+  
   void _copyLocationToClipboard(LocationData location) {
     final coordinates = '${location.latitude}, ${location.longitude}';
     Clipboard.setData(ClipboardData(text: coordinates));
@@ -1339,13 +1443,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       SnackBar(
         content: Text('Copied: $coordinates'),
         duration: const Duration(seconds: 2),
-        action: SnackBarAction(
-          label: 'Open Maps',
-          onPressed: () {
-            // Could launch maps app with coordinates if needed
-            developer.log('Open maps with: $coordinates', name: 'HomeScreen');
-          },
-        ),
       ),
     );
   }
