@@ -70,6 +70,11 @@ RTC_DATA_ATTR bool firstDisconnectLogged = false;  // Track if first disconnect 
 RTC_DATA_ATTR bool hasValidConfig = false;  // Track if we have valid config on boot
 RTC_DATA_ATTR bool motionWakeNeedsSMS = false;  // Track if we need to send SMS after motion wake
 
+// Grace period for BLE connection on boot
+#define BOOT_BLE_GRACE_PERIOD 30000  // 30 seconds grace period for BLE connection
+static unsigned long bootTime = 0;  // Track when device booted
+static bool gracePeriodActive = false;  // Track if we're in grace period
+
 // Forward declarations
 void saveConfiguration();
 void clearConfiguration();
@@ -476,8 +481,10 @@ void setup() {
     Serial.println(" seconds");
   }
   
-  // Always initialize BLE for reconnection capability
-  initBLE();
+  // Initialize BLE only if not timer wake
+  if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER || !disconnectSMSSent) {
+    initBLE();
+  }
   initGPSHistory();
   
   // Load last known GPS location
@@ -494,24 +501,15 @@ void setup() {
   
   // Check if this is a timer wake for SMS
   if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && disconnectSMSSent) {
-    Serial.println("📱 Timer wake for SMS - BLE initialized for reconnection");
-    Serial.println("⏱️ 30-second window for BLE reconnection...");
+    Serial.println("📱 Timer wake for scheduled SMS");
     
-    // Ensure BLE advertising is properly configured and started
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);
-    pAdvertising->setMaxPreferred(0x12);
-    pAdvertising->start();
-    Serial.println("🔄 BLE advertising started - device discoverable");
-    
-    // Initialize SIM7070G for potential SMS
+    // Initialize SIM7070G for SMS
     if (!initializeSIM7070G()) {
       Serial.println("⚠️ SIM7070G init failed");
     }
     
-    // Skip motion sensor init on timer wake to save power
-    Serial.println("⚠️ Motion sensor skipped on timer wake");
+    // Skip BLE and motion sensor init on timer wake to save power
+    Serial.println("⚡ Power optimization: Skipping BLE advertising and motion sensor");
     
   } else {
     // Initialize LSM6DSL motion sensor for other wake reasons
@@ -537,13 +535,13 @@ void setup() {
   
   Serial.println("\n📡 Ready for BLE connections...\n");
   
-  // On boot with valid config but no BLE, start SMS cycle
+  // On boot with valid config, activate grace period for BLE connection
   if (hasValidConfig && !deviceConnected && wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
     Serial.println("⚠️ No BLE connection on boot with saved config");
-    Serial.println("📱 Will start SMS cycle after motion detection");
-    // Set flag to prepare for SMS sending
+    Serial.println("⏱️ Starting 30-second grace period for BLE connection...");
+    bootTime = millis();
+    gracePeriodActive = true;
     oldDeviceConnected = false;  // Ensure we're in disconnected state
-    // Don't send SMS immediately - wait for motion as per requirement
   }
 }
 
@@ -555,140 +553,107 @@ void loop() {
   static unsigned long lastSleepCheck = 0;
   static bool lastUserPresent = false;  // Track previous IR sensor state for change detection
   
-  // Handle timer wake - monitor BLE continuously, no window limit
-  static bool timerSMSSent = false;  // Track if SMS was sent this timer wake
-  static unsigned long timerWakeStart = 0;
-  
-  // Timer wake requires handling (isTimerWake is preserved across deep sleep)
-  if (isTimerWake && !timerSMSSent) {
-    if (timerWakeStart == 0) {
-      timerWakeStart = millis();
-      Serial.println("\n⏰ Timer wake - Monitoring for BLE reconnection");
-      Serial.println("📱 SMS will be sent if no reconnection and alerts enabled");
-      
-      // Ensure disconnectSMSSent is true for timer wake (it should be preserved)
-      if (!disconnectSMSSent) {
-        Serial.println("⚠️ Timer wake but disconnectSMSSent is false - fixing state");
-        disconnectSMSSent = true;  // Fix the state
-      }
-    }
+  // Handle grace period for BLE connection on boot
+  if (gracePeriodActive) {
+    unsigned long currentTime = millis();
     
-    // Check if still disconnected and alerts are enabled
-    if (!deviceConnected) {
-      // Show status every 10 seconds
-      static unsigned long lastStatusShow = 0;
-      if (millis() - lastStatusShow > 10000) {
-        Serial.println("⏱️ Still monitoring for BLE reconnection...");
-        lastStatusShow = millis();
-      }
-      
-      // After reasonable wait time (60 seconds), send SMS if alerts enabled
-      if (millis() - timerWakeStart > 60000 && !timerSMSSent) {
-        // Check if alerts are still enabled
-        if (config.alertEnabled && strlen(config.phoneNumber) > 0) {
-          Serial.println("\n📱 No reconnection - Sending scheduled SMS...");
-          
-          // Ensure BLE is still advertising
-          if (pServer && !pServer->getConnectedCount()) {
-            pServer->getAdvertising()->start();
-            Serial.println("🔄 BLE advertising refreshed");
-          }
-          
-          // Always get fresh GPS for accurate tracking
-          unsigned long currentTime = millis();
-          Serial.println("🛰️ Acquiring fresh GPS fix...");
-          if (acquireGPSFix(currentGPS, 30)) {
-            status.lastGPSTime = currentTime;
-            saveGPSData(currentGPS);
-            logGPSPoint(currentGPS, 2);
-          }
-          
-          // Send SMS
-          if (currentGPS.valid) {
-            if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
-              Serial.println("✅ Scheduled SMS sent successfully!");
-            } else {
-              Serial.println("❌ Failed to send scheduled SMS");
-            }
-          }
-          
-          timerSMSSent = true;  // Mark SMS as sent
-          lastDisconnectSMS = currentTime;  // Update last SMS time
-        } else {
-          Serial.println("⚠️ Alerts disabled or no phone configured - skipping SMS");
-          timerSMSSent = true;  // Mark as handled even if skipped
-        }
-        
-        // After SMS (or skip), go to deep sleep for next interval
-        Serial.println("💤 Going back to deep sleep until next SMS...");
-        
-        // Reset flags for next timer wake
-        timerSMSSent = false;
-        timerWakeStart = 0;
-        isTimerWake = false;
-        
-        // IMPORTANT: Disable all wake sources first
-        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-        
-        // Make sure interrupt pins are not floating
-        pinMode(INT1_PIN, INPUT_PULLDOWN);
-        pinMode(INT2_PIN, INPUT_PULLDOWN);
-        delay(100);
-        
-        // Configure timer-only wake
-        esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
-        Serial.flush();
-        delay(100);
-        esp_deep_sleep_start();
-        // Code will not reach here - system restarts on wake
+    // Check if connected during grace period
+    if (deviceConnected) {
+      Serial.println("✅ BLE connected during grace period - normal operation");
+      gracePeriodActive = false;
+      oldDeviceConnected = true;
+    }
+    // Check if grace period expired
+    else if (currentTime - bootTime > BOOT_BLE_GRACE_PERIOD) {
+      Serial.println("⏱️ Grace period expired - no BLE connection");
+      gracePeriodActive = false;
+      Serial.println("🔍 Now monitoring for motion detection...");
+      Serial.println("📱 SMS will be sent only after motion is detected");
+      // Device will now wait for motion before sending any SMS
+    }
+    else {
+      // Still in grace period - show status every 5 seconds
+      static unsigned long lastGraceStatus = 0;
+      if (currentTime - lastGraceStatus > 5000) {
+        unsigned long remaining = (BOOT_BLE_GRACE_PERIOD - (currentTime - bootTime)) / 1000;
+        Serial.print("⏳ Waiting for BLE connection... ");
+        Serial.print(remaining);
+        Serial.println(" seconds remaining");
+        lastGraceStatus = currentTime;
       }
     }
   }
   
-  // If reconnected during timer wake, stop SMS and stay awake
-  if (isTimerWake && deviceConnected) {
-    Serial.println("✅ BLE Reconnected during timer wake - SMS cycle stopped");
-    Serial.println("📡 Staying awake for normal operation");
+  // Handle timer wake - send SMS immediately without BLE window
+  if (isTimerWake) {
+    Serial.println("\n⏰ Timer wake - Sending scheduled SMS immediately...");
     
-    // Initialize motion sensor if it was skipped during timer wake
-    if (!motionSensor.isInitialized()) {
-      Serial.println("🔄 Initializing motion sensor for normal operation...");
-      if (motionSensor.begin()) {
-        Serial.println("✅ LSM6DSL initialized after timer wake reconnection");
-        lastMotionTime = millis();
-      } else {
-        Serial.println("⚠️ LSM6DSL initialization failed");
+    // Check if alerts are enabled and phone is configured
+    if (config.alertEnabled && strlen(config.phoneNumber) > 0) {
+      // Always get fresh GPS for accurate tracking
+      unsigned long currentTime = millis();
+      Serial.println("🛰️ Acquiring fresh GPS fix...");
+      bool gpsAcquired = acquireGPSFix(currentGPS, 30);
+      if (gpsAcquired) {
+        status.lastGPSTime = currentTime;
+        saveGPSData(currentGPS);
+        logGPSPoint(currentGPS, 2);
       }
+      
+      // Send SMS with location
+      if (gpsAcquired || currentGPS.valid) {
+        if (sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval)) {
+          Serial.println("✅ Scheduled SMS sent successfully!");
+        } else {
+          Serial.println("❌ Failed to send scheduled SMS");
+        }
+      } else {
+        // No GPS available, send simple notification
+        String message = "Bike Tracker Alert\n\n";
+        message += "GPS location unavailable\n";
+        message += "Device Status: Disconnected\n";
+        message += "Next update in ";
+        message += String(config.updateInterval);
+        message += " seconds";
+        
+        if (sendSMS(config.phoneNumber, message)) {
+          Serial.println("✅ Alert SMS sent (no GPS)");
+        } else {
+          Serial.println("❌ Failed to send alert SMS");
+        }
+      }
+      
+      lastDisconnectSMS = currentTime;
+    } else {
+      Serial.println("⚠️ Alerts disabled or no phone configured - skipping SMS");
     }
     
-    // Clear all timer wake flags
+    // Go back to deep sleep immediately for next interval
+    Serial.println("💤 Going back to deep sleep until next SMS...");
+    
+    // Reset timer wake flag
     isTimerWake = false;
-    timerSMSSent = false;
-    timerWakeStart = 0;
     
-    // Reset disconnect flags for potential re-disconnect
-    disconnectSMSSent = false;
-    firstDisconnectLogged = false;
-    motionWakeNeedsSMS = false;
-    lastDisconnectSMS = 0;
+    // IMPORTANT: Disable all wake sources first
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     
-    // Stay awake and continue normal operation
-    oldDeviceConnected = deviceConnected;  // Update connection state
+    // Make sure interrupt pins are not floating
+    pinMode(INT1_PIN, INPUT_PULLDOWN);
+    pinMode(INT2_PIN, INPUT_PULLDOWN);
+    delay(100);
+    
+    // Configure timer-only wake for next interval
+    esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
+    Serial.flush();
+    delay(100);
+    esp_deep_sleep_start();
+    // Code will not reach here - system restarts on wake
   }
   
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
     // BLE just disconnected
-    Serial.println("🔴 BLE Disconnected - Initializing for SMS mode");
-    
-    // Only reset module on first BLE disconnect, not on wake from sleep
-    if (!disconnectSMSSent) {
-      Serial.println("🔄 Resetting SIM7070G module...");
-      if (!resetModule()) {
-        Serial.println("⚠️ Module reset failed");
-      }
-      delay(2000);
-    }
+    Serial.println("🔴 BLE Disconnected - Preparing for SMS mode");
     
     delay(500);
     pServer->startAdvertising();
@@ -786,9 +751,9 @@ void loop() {
       }
     }
     
-    // Check for motion (skip during timer wake if SMS already sent)
+    // Check for motion (skip during timer wake)
     bool motion = false;
-    if (!isTimerWake || !timerSMSSent) {
+    if (!isTimerWake) {
       motion = motionSensor.detectMotion();
       
       if (motion) {
@@ -867,9 +832,9 @@ void loop() {
       }
     }
     
-    // Sleep management when disconnected (skip if actively handling timer wake)
+    // Sleep management when disconnected (skip if actively handling timer wake or grace period)
     // Also skip if we're in timer wake mode (motion sensor not initialized)
-    if (!isTimerWake && !motion && !inSleepMode && 
+    if (!isTimerWake && !gracePeriodActive && !motion && !inSleepMode && 
         motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
       Serial.println("😴 No motion for 10 seconds - Preparing for sleep...");
       

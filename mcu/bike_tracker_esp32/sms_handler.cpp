@@ -21,20 +21,20 @@ bool sendSMS(const String& phoneNumber, const String& message) {
   // Clear any pending SMS mode
   clearSerialBuffer();
   simSerial.write(27);  // ESC key to exit any pending mode
-  delay(1000);
+  delay(500);  // Reduced delay
   
-  // Check if module is ready
-  if (!isModuleReady()) {
-    Serial.println("❌ Module not ready");
+  // Quick module check - no need for extensive verification
+  if (!sendATCommand("AT", "OK", 1000)) {
+    Serial.println("❌ Module not responding");
     return false;
   }
   
-  // Verify network registration
+  // Verify network registration with reduced delay
   if (!checkNetworkRegistration()) {
     Serial.println("❌ Network not registered");
     return false;
   }
-  delay(2000);
+  delay(1000);  // Reduced delay
   
   // Set SMS text mode
   if (!sendATCommand("AT+CMGF=1", "OK")) {
@@ -50,11 +50,11 @@ bool sendSMS(const String& phoneNumber, const String& message) {
   simSerial.println();
   
   // Wait for prompt
-  delay(2000);
+  delay(1000);  // Reduced delay
   unsigned long start = millis();
   bool promptReceived = false;
   
-  while (millis() - start < 5000) {
+  while (millis() - start < 3000) {  // Reduced timeout
     if (simSerial.available()) {
       char c = simSerial.read();
       if (c == '>') {
@@ -80,11 +80,11 @@ bool sendSMS(const String& phoneNumber, const String& message) {
   delay(100);
   simSerial.write(26);  // Ctrl+Z to send
   
-  // Wait for confirmation
+  // Wait for confirmation with reduced timeout
   start = millis();
   String response = "";
   
-  while (millis() - start < 30000) {
+  while (millis() - start < 15000) {  // Reduced timeout from 30s to 15s
     if (simSerial.available()) {
       char c = simSerial.read();
       response += c;
@@ -95,8 +95,9 @@ bool sendSMS(const String& phoneNumber, const String& message) {
         return true;
       }
       
-      // Check for error
+      // Check for error - fail fast
       if (response.indexOf("ERROR") != -1 || response.indexOf("+CMS ERROR") != -1) {
+        Serial.println("❌ SMS send error detected");
         return false;
       }
     }
@@ -116,11 +117,11 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
   // Clear any pending SMS mode
   clearSerialBuffer();
   simSerial.write(27);  // ESC key
-  delay(1000);
+  delay(500);  // Reduced delay
   
-  // Check module and network only once
-  if (!isModuleReady()) {
-    Serial.println("❌ Module not ready");
+  // Quick module check
+  if (!sendATCommand("AT", "OK", 1000)) {
+    Serial.println("❌ Module not responding");
     return false;
   }
   
@@ -128,7 +129,7 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
     Serial.println("❌ Network not registered");
     return false;
   }
-  delay(2000);
+  delay(1000);  // Reduced delay
   
   // Send first message
   Serial.println("📱 Sending first SMS (geo URI)...");
@@ -142,11 +143,11 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
   simSerial.print(cmd);
   simSerial.println();
   
-  delay(2000);
+  delay(1000);  // Reduced delay
   bool promptReceived = false;
   unsigned long start = millis();
   
-  while (millis() - start < 5000) {
+  while (millis() - start < 3000) {  // Reduced timeout
     if (simSerial.available()) {
       char c = simSerial.read();
       if (c == '>') {
@@ -176,7 +177,7 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
   String response = "";
   bool firstSent = false;
   
-  while (millis() - start < 30000) {
+  while (millis() - start < 15000) {  // Reduced timeout
     if (simSerial.available()) {
       char c = simSerial.read();
       response += c;
@@ -186,7 +187,7 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
         break;
       }
       if (response.indexOf("ERROR") != -1 || response.indexOf("+CMS ERROR") != -1) {
-        Serial.println("❌ First SMS failed");
+        Serial.println("❌ First SMS failed - aborting");
         return false;
       }
     }
@@ -198,16 +199,16 @@ bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String
     return false;
   }
   
-  // Send second message with proper delay
-  delay(3000);  // Increased delay between messages for module recovery
+  // Send second message with minimal delay
+  delay(2000);  // Reduced delay between messages
   Serial.println("📱 Sending second SMS (instructions)...");
   
   // Clear buffer and send second message
   clearSerialBuffer();
   
-  // Re-set text mode in case it was lost
-  sendATCommand("AT+CMGF=1", "OK");
-  delay(500);
+  // Re-set text mode quickly
+  sendATCommand("AT+CMGF=1", "OK", 1000);
+  delay(300);  // Reduced delay
   
   cmd = "AT+CMGS=\"" + phoneNumber + "\"";
   simSerial.print(cmd);
@@ -280,7 +281,7 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
   // CRITICAL: Disable GPS before SMS (SIM7070G shares RF pins between GPS and LTE)
   Serial.println("🛰️ Disabling GPS for SMS operation...");
   disableGNSSPower();
-  delay(5000);  // Wait for GPS to fully power down
+  delay(2000);  // Reduced delay for faster SMS
   
   // First message: geo URI only
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
@@ -327,7 +328,7 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
   // CRITICAL: Disable GPS before SMS (SIM7070G shares RF pins between GPS and LTE)
   Serial.println("🛰️ Disabling GPS for SMS operation...");
   disableGNSSPower();
-  delay(5000);  // Wait for GPS to fully power down
+  delay(2000);  // Reduced delay for faster SMS
   
   // First message: geo URI only
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;

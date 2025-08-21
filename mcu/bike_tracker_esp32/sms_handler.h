@@ -11,8 +11,8 @@
 #include "gps_handler.h"
 
 // SMS configuration
-#define MAX_SMS_RETRIES 3
-#define SMS_RETRY_DELAY 5000
+#define MAX_SMS_RETRIES 2  // Reduced retries to save power
+#define SMS_RETRY_DELAY 3000  // Reduced delay between retries
 
 // SMS alert types
 enum AlertType {
