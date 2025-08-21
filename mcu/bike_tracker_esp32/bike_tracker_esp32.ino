@@ -224,8 +224,23 @@ void clearConfiguration() {
 // Sensor Reading
 // ============================================================================
 void readSensors() {
+  // Store previous state for change detection
+  static bool previousUserPresent = false;
+  
   // Read IR sensor (HW-201) - LOW when human detected, HIGH when no detection
   status.userPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
+  
+  // Check if IR sensor state changed
+  if (status.userPresent != previousUserPresent) {
+    previousUserPresent = status.userPresent;
+    Serial.print("👤 IR Sensor: User ");
+    Serial.println(status.userPresent ? "Detected" : "Away");
+    
+    // Immediately notify app of IR state change when BLE connected
+    if (deviceConnected) {
+      updateStatusCharacteristic();
+    }
+  }
   
   // Determine device mode based on connection and IR sensor
   if (status.bleConnected) {
@@ -243,8 +258,7 @@ void readSensors() {
 // Status Update
 // ============================================================================
 void updateStatusCharacteristic() {
-  // Read sensors before updating status
-  readSensors();
+  // Don't re-read sensors here - they're already being polled frequently
   
   if (pStatusChar) {
     // Check if phone is configured (not empty)
@@ -1157,8 +1171,15 @@ void loop() {
     }
   }
   
-  // Periodic status update (every 10 seconds when connected)
-  if (deviceConnected && (millis() - lastStatusUpdate > 10000)) {
+  // Fast IR sensor polling (every 250ms for responsive updates)
+  static unsigned long lastIRCheck = 0;
+  if (millis() - lastIRCheck > 250) {
+    lastIRCheck = millis();
+    readSensors();  // This will trigger immediate update if IR state changes
+  }
+  
+  // Periodic full status update (every 5 seconds when connected)
+  if (deviceConnected && (millis() - lastStatusUpdate > 5000)) {
     lastStatusUpdate = millis();
     updateStatusCharacteristic();
   }
