@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'dart:developer' as developer;
+import 'dart:ui' as ui;
 import '../models/location_data.dart';
 import '../services/map_download_service.dart';
 import 'offline_tile_provider.dart';
@@ -274,38 +275,33 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
         if (lat == 0.0 && lng == 0.0) continue;
         
         // Style differently from phone GPS markers
-        // Use a diamond shape for MCU GPS points
+        // Use a Google Maps-style pin marker for MCU GPS points
         markers.add(
           Marker(
             point: LatLng(lat, lng),
-            width: 24,
-            height: 24,
-            child: Transform.rotate(
-              angle: 0.785398, // 45 degrees in radians
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.8),
-                  border: Border.all(
-                    color: Colors.white,
-                    width: 2,
+            width: 32,
+            height: 40,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                // Pin shape with shadow
+                CustomPaint(
+                  size: const Size(32, 40),
+                  painter: _MapPinPainter(
+                    color: Colors.orange,
+                    borderColor: Colors.white,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.2),
-                      blurRadius: 4,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
                 ),
-                child: Transform.rotate(
-                  angle: -0.785398, // Rotate icon back
-                  child: const Icon(
+                // Icon inside the pin
+                const Positioned(
+                  top: 6,
+                  child: Icon(
                     Icons.satellite_alt,
                     color: Colors.white,
-                    size: 12,
+                    size: 16,
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         );
@@ -637,4 +633,81 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
     }
     super.dispose();
   }
+}
+
+// Custom painter for Google Maps-style pin marker
+class _MapPinPainter extends CustomPainter {
+  final Color color;
+  final Color borderColor;
+
+  _MapPinPainter({
+    required this.color,
+    required this.borderColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    final path = ui.Path();
+    
+    // Draw shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.2)
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 3);
+    
+    final shadowPath = ui.Path();
+    shadowPath.addOval(Rect.fromCenter(
+      center: Offset(size.width / 2, size.height - 2),
+      width: 12,
+      height: 6,
+    ));
+    canvas.drawPath(shadowPath, shadowPaint);
+    
+    // Create pin shape path
+    final centerX = size.width / 2;
+    final radius = size.width / 2.5;
+    final pinHeight = size.height;
+    
+    // Start from the bottom point
+    path.moveTo(centerX, pinHeight);
+    
+    // Create the pin shape with smooth curves
+    path.quadraticBezierTo(
+      centerX - radius * 0.5, pinHeight - radius * 1.5,
+      centerX - radius, pinHeight - radius * 2,
+    );
+    
+    // Top circle part
+    path.arcToPoint(
+      Offset(centerX + radius, pinHeight - radius * 2),
+      radius: Radius.circular(radius),
+      clockwise: true,
+    );
+    
+    // Right side curve to bottom
+    path.quadraticBezierTo(
+      centerX + radius * 0.5, pinHeight - radius * 1.5,
+      centerX, pinHeight,
+    );
+    
+    path.close();
+    
+    // Draw white border
+    paint.color = borderColor;
+    paint.style = PaintingStyle.fill;
+    canvas.drawPath(path, paint);
+    
+    // Draw colored fill (slightly smaller for border effect)
+    final scale = 0.85;
+    canvas.save();
+    canvas.translate(centerX * (1 - scale), (pinHeight - radius * 2) * (1 - scale));
+    canvas.scale(scale, scale);
+    
+    paint.color = color;
+    canvas.drawPath(path, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
