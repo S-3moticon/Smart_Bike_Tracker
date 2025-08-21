@@ -463,6 +463,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _selectedCountry = country;
                   // Revalidate phone number when country changes
                   _validatePhoneNumber(_phoneController.text);
+                  developer.log('Country selected: ${country.country} (${country.code})', name: 'Settings');
                 });
                 Navigator.pop(context);
               },
@@ -477,6 +478,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    
+    // Debug log for tracking display values
+    if (_phoneController.text.isNotEmpty) {
+      developer.log('Display - Country: $_selectedCountryCode, Phone: ${_phoneController.text}, Full: $_selectedCountryCode${_phoneController.text}', name: 'Settings');
+    }
     
     if (_isLoading) {
       return const Scaffold(
@@ -653,7 +659,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Full number: $_selectedCountryCode${_phoneController.text}',
+                                'Full number: ${_phoneController.text.isNotEmpty ? "$_selectedCountryCode${_phoneController.text}" : "(not set)"}',
                                 style: theme.textTheme.bodyMedium?.copyWith(
                                   color: theme.colorScheme.onSecondaryContainer,
                                 ),
