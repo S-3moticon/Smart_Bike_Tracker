@@ -26,6 +26,7 @@ extern HardwareSerial simSerial;
 
 // Module initialization and control
 bool initializeSIM7070G();
+bool isSIM7070GInitialized();
 bool sendATCommand(const String& cmd, const String& expectedResp, uint32_t timeout = DEFAULT_TIMEOUT);
 bool checkNetworkRegistration();
 bool isModuleReady();

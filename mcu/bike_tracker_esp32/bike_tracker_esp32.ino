@@ -483,9 +483,10 @@ void setup() {
   
   // Initialize modules based on wake reason
   if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && disconnectSMSSent) {
+    // Only initialize SIM7070G for timer wake SMS sending
     initializeSIM7070G();
   } else {
-    // Initialize motion sensor
+    // Initialize motion sensor only
     if (motionSensor.begin()) {
       Serial.println("✅ LSM6DSL ready");
       lastMotionTime = millis();
@@ -495,10 +496,8 @@ void setup() {
       motionSensorInitialized = false;
     }
     
-    // Initialize SIM7070G
-    if (initializeSIM7070G()) {
-      Serial.println(checkNetworkRegistration() ? "✅ Network OK" : "⚠️ No network");
-    }
+    // SIM7070G will be initialized only when GPS acquisition is needed
+    Serial.println("📡 SIM7070G: On-demand init");
   }
   
   Serial.println("📡 Ready\n");

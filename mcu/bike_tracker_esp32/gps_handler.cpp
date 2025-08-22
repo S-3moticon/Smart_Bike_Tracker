@@ -80,12 +80,21 @@ uint64_t parseGPSDateTimeToUnixMillis(const String& datetime) {
  * Returns true when valid fix is obtained
  */
 bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
+  // Ensure SIM7070G is initialized before GPS acquisition
+  if (!isSIM7070GInitialized()) {
+    Serial.println("🔄 Initializing SIM7070G for GPS...");
+    if (!initializeSIM7070G()) {
+      Serial.println("❌ Failed to initialize SIM7070G");
+      return false;
+    }
+  }
+  
   // First disable RF to prepare for GPS operation
   Serial.println("📡 Switching to GPS mode...");
   disableRF();
   delay(500);
   
-  // Enable GPS (module should already be initialized)
+  // Enable GPS
   if (!enableGNSSPower()) {
     Serial.println("❌ Failed to enable GPS");
     // Re-enable RF on failure

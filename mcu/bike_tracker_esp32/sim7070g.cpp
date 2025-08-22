@@ -9,11 +9,26 @@
 // Hardware serial instance for SIM7070G communication
 HardwareSerial simSerial(1);
 
+// Track initialization state
+static bool sim7070gInitialized = false;
+
+/*
+ * Check if SIM7070G is initialized
+ */
+bool isSIM7070GInitialized() {
+  return sim7070gInitialized;
+}
+
 /*
  * Initialize the SIM7070G module
  * Sets up UART, performs module reset, and configures basic settings
  */
 bool initializeSIM7070G() {
+  // If already initialized, just return true
+  if (sim7070gInitialized) {
+    Serial.println("📡 SIM7070G already initialized");
+    return true;
+  }
   // Initialize serial communication
   simSerial.begin(115200, SERIAL_8N1, SIM_RX_PIN, SIM_TX_PIN);
   delay(2000);
@@ -46,6 +61,7 @@ bool initializeSIM7070G() {
   sendATCommand("AT+CSMP=17,167,0,0", "OK");
   
   Serial.println("✅ SIM7070G initialization complete");
+  sim7070gInitialized = true;
   return true;
 }
 
