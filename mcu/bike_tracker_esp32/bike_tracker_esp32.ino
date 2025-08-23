@@ -4,6 +4,11 @@
 #include <BLE2902.h>
 #include <Preferences.h>
 #include "esp_sleep.h"
+#include "nvs_flash.h"
+
+// ESP-IDF BLE APIs for DLE support
+#include "esp_gap_ble_api.h"
+#include "esp_gatt_common_api.h"
 
 // Custom Module Libraries
 #include "ble_protocol.h"
@@ -20,6 +25,7 @@ BLEServer* pServer = NULL;
 BLECharacteristic* pConfigChar = NULL;
 BLECharacteristic* pStatusChar = NULL;
 BLECharacteristic* pHistoryChar = NULL;
+BLECharacteristic* pCommandChar = NULL;
 
 // Connection State
 bool deviceConnected = false;
@@ -71,6 +77,7 @@ void clearConfiguration();
 void updateStatusCharacteristic();
 void testGPSAndSMS();
 void syncGPSHistory();
+void sendGPSHistoryPage(int page);
 void readSensors();
 
 // ============================================================================
@@ -180,6 +187,60 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
           updateStatusCharacteristic();
         }
       }
+    }
+};
+
+// ============================================================================
+// Command Characteristic Callbacks
+// ============================================================================
+class CommandCharCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      String command = String(pCharacteristic->getValue().c_str());
+      
+      Serial.print("📝 Command received: ");
+      Serial.println(command);
+      
+      // Parse page request command: "GPS_PAGE:0", "GPS_PAGE:1", etc.
+      if (command.startsWith("GPS_PAGE:")) {
+        int page = command.substring(9).toInt();
+        sendGPSHistoryPage(page);
+      }
+      // Add other commands as needed
+      else if (command == "SYNC") {
+        syncGPSHistory();
+      }
+      else if (command == "CLEAR_HISTORY") {
+        clearGPSHistory();
+        Serial.println("✅ GPS history cleared via command");
+      }
+    }
+};
+
+// ============================================================================
+// History Characteristic Callbacks
+// ============================================================================
+class HistoryCharCallbacks : public BLECharacteristicCallbacks {
+    void onRead(BLECharacteristic *pCharacteristic) {
+      // Generate GPS history JSON on-demand when app requests it
+      // Limited to 7 points to fit within BLE characteristic size limit (512 bytes)
+      String historyJson = getGPSHistoryJSON(7);  // Max 7 points for BLE constraints
+      
+      // Validate size before setting (should be ~455 bytes for 7 points)
+      if (historyJson.length() > 512) {
+        Serial.println("⚠️ GPS history too large, reducing to 5 points...");
+        historyJson = getGPSHistoryJSON(5);  // Fallback to fewer points
+      }
+      
+      pCharacteristic->setValue(historyJson.c_str());
+      
+      int pointCount = getGPSHistoryCount();
+      Serial.print("📖 GPS history read by app: ");
+      Serial.print(min(7, pointCount));
+      Serial.print(" of ");
+      Serial.print(pointCount);
+      Serial.print(" points (");
+      Serial.print(historyJson.length());
+      Serial.println(" bytes)");
     }
 };
 
@@ -342,7 +403,17 @@ void initBLE() {
   Serial.println(deviceName);
   
   BLEDevice::init(deviceName);
-  BLEDevice::setMTU(185);  // For JSON config
+  BLEDevice::setMTU(512);  // Increased for DLE support
+  
+  // Configure Data Length Extension (DLE) for maximum throughput
+  // This allows BLE packets with up to 251 bytes payload
+  // Using Arduino ESP32 BLE library compatible functions
+  esp_bd_addr_t bd_addr = {0};  // Any address (all zeros)
+  esp_ble_gap_set_pkt_data_len(bd_addr, 251);
+  
+  // Set preferred connection parameters for optimal DLE performance
+  // min_interval=6*1.25ms=7.5ms, max_interval=6*1.25ms=7.5ms, latency=0, timeout=400*10ms=4000ms
+  esp_ble_gap_set_prefer_conn_params(bd_addr, 0x06, 0x06, 0x00, 0x0190);
   
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
@@ -370,7 +441,38 @@ void initBLE() {
                     BLECharacteristic::PROPERTY_READ |
                     BLECharacteristic::PROPERTY_NOTIFY
                   );
+  pHistoryChar->setCallbacks(new HistoryCharCallbacks());  // Add callback for on-demand read
   pHistoryChar->addDescriptor(new BLE2902());
+  
+  // Command characteristic (WRITE)
+  pCommandChar = pService->createCharacteristic(
+                    COMMAND_CHAR_UUID,
+                    BLECharacteristic::PROPERTY_WRITE
+                  );
+  pCommandChar->setCallbacks(new CommandCharCallbacks());
+  
+  // Set initial GPS history value for immediate reads
+  if (pHistoryChar) {
+    // Limited to 7 points to fit within BLE characteristic size limit
+    String initialHistory = getGPSHistoryJSON(7);
+    
+    // Validate size before setting
+    if (initialHistory.length() > 512) {
+      initialHistory = getGPSHistoryJSON(5);  // Fallback to fewer points
+    }
+    
+    pHistoryChar->setValue(initialHistory.c_str());
+    
+    int totalPoints = getGPSHistoryCount();
+    int sentPoints = min(7, totalPoints);
+    Serial.print("📍 Initial GPS history set: ");
+    Serial.print(sentPoints);
+    Serial.print(" of ");
+    Serial.print(totalPoints);
+    Serial.print(" points (");
+    Serial.print(initialHistory.length());
+    Serial.println(" bytes)");
+  }
   
   // Start service
   pService->start();
@@ -394,16 +496,80 @@ void syncGPSHistory() {
   
   Serial.println("📤 Syncing GPS history to app...");
   
-  // Get GPS history as JSON
-  String historyJson = getGPSHistoryJSON(20);  // Send last 20 points
+  // Get GPS history as JSON - limited to 7 points for BLE size constraints
+  String historyJson = getGPSHistoryJSON(7);  // Max 7 points for BLE limit (512 bytes)
   
-  // Send via BLE
+  // Validate size before setting
+  if (historyJson.length() > 512) {
+    Serial.println("   ⚠️ GPS history too large, reducing to 5 points...");
+    historyJson = getGPSHistoryJSON(5);  // Fallback to fewer points
+  }
+  
+  // Store value for future reads AND notify
   pHistoryChar->setValue(historyJson.c_str());
   pHistoryChar->notify();
   
+  int pointCount = getGPSHistoryCount();
+  Serial.print("   Synced ");
+  Serial.print(min(7, pointCount));
+  Serial.print(" of ");
+  Serial.print(pointCount);
+  Serial.print(" GPS points (");
+  Serial.print(historyJson.length());
+  Serial.println(" bytes) via notification");
+}
+
+// ============================================================================
+// Send GPS History Page
+// ============================================================================
+void sendGPSHistoryPage(int page) {
+  if (!pHistoryChar) {
+    Serial.println("❌ History characteristic not initialized");
+    return;
+  }
+  
+  // Use 5 points per page to ensure it fits in 512 bytes
+  const int POINTS_PER_PAGE = 5;
+  int totalPoints = getGPSHistoryCount();
+  int totalPages = (totalPoints + POINTS_PER_PAGE - 1) / POINTS_PER_PAGE;
+  
+  Serial.print("📄 Sending GPS page ");
+  Serial.print(page);
+  Serial.print(" of ");
+  Serial.print(totalPages);
+  Serial.print(" (");
+  Serial.print(totalPoints);
+  Serial.println(" total points)");
+  
+  if (page >= totalPages && totalPoints > 0) {
+    // Send empty response for invalid page
+    String emptyJson = "{\"history\":[],\"page\":" + String(page) + 
+                      ",\"totalPages\":" + String(totalPages) + 
+                      ",\"totalPoints\":" + String(totalPoints) + "}";
+    pHistoryChar->setValue(emptyJson.c_str());
+    pHistoryChar->notify();
+    Serial.println("   Page out of range");
+    return;
+  }
+  
+  // Get GPS history for specific page - always use consistent POINTS_PER_PAGE
+  String json = getGPSHistoryPageJSON(page, POINTS_PER_PAGE);
+  
+  // Debug: show first part of JSON to see metadata
+  Serial.print("   JSON metadata: ");
+  int endOfMeta = json.indexOf(",[{");
+  if (endOfMeta > 0) {
+    Serial.println(json.substring(0, endOfMeta) + "...]");
+  } else {
+    Serial.println(json.substring(0, min(100, (int)json.length())));
+  }
+  
+  pHistoryChar->setValue(json.c_str());
+  pHistoryChar->notify();
+  
   Serial.print("   Sent ");
-  Serial.print(getGPSHistoryCount());
-  Serial.println(" GPS points to app");
+  Serial.print(json.length());
+  Serial.println(" bytes");
 }
 
 // ============================================================================
@@ -413,6 +579,21 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n🚴 Smart Bike Tracker v1.0\n");
+  
+  // Initialize NVS flash for PHY calibration and preferences
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    Serial.println("⚠️ NVS full or version mismatch - erasing...");
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+    Serial.println("✅ NVS reinitialized");
+  }
+  if (ret != ESP_OK) {
+    Serial.print("❌ NVS init failed: ");
+    Serial.println(ret);
+  } else {
+    Serial.println("✅ NVS initialized");
+  }
   
   // Check wake reason
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();

@@ -23,7 +23,7 @@ struct GPSData {
 };
 
 // GPS History Configuration
-#define MAX_GPS_HISTORY 50  // Maximum number of GPS points to store
+#define MAX_GPS_HISTORY 30  // Maximum number of GPS points to store (reduced to save NVS space)
 #define GPS_LOG_NAMESPACE "gps-log"
 
 // GPS History Entry for logging
@@ -50,6 +50,7 @@ bool logGPSPoint(const GPSData& data, uint8_t source);
 bool logGPSPoint(float lat, float lon, uint8_t source);
 int getGPSHistoryCount();
 String getGPSHistoryJSON(int maxPoints = 10);
+String getGPSHistoryPageJSON(int page, int pointsPerPage = 7);  // New pagination function
 void clearGPSHistory();
 bool getGPSLogEntry(int index, GPSLogEntry& entry);
 

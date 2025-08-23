@@ -289,8 +289,8 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
     if (widget.mcuGpsPoints != null) {
       for (int i = 0; i < widget.mcuGpsPoints!.length; i++) {
         final point = widget.mcuGpsPoints![i];
-        final lat = point['latitude'] ?? 0.0;
-        final lng = point['longitude'] ?? 0.0;
+        final lat = point['lat'] ?? point['latitude'] ?? 0.0;
+        final lng = point['lon'] ?? point['longitude'] ?? 0.0;
         
         // Skip invalid points
         if (lat == 0.0 && lng == 0.0) continue;

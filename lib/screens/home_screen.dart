@@ -4,6 +4,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import '../services/bluetooth_service.dart' as bike_ble;
 import '../services/location_service.dart';
@@ -84,6 +85,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _setupListeners();
     await _loadLocationHistory();
     
+    // Load saved GPS history from backup
+    await _loadGpsHistoryBackup();
+    
     // Check if Bluetooth is off and prompt user
     if (_bluetoothState == BluetoothAdapterState.off) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -100,6 +104,88 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _locationHistory = history;
     });
     developer.log('Loaded ${history.length} locations from storage', name: 'HomeScreen');
+  }
+  
+  Future<void> _saveGpsHistoryLocally(List<Map<String, dynamic>> history) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Convert history to JSON string
+      final historyJson = json.encode(history);
+      await prefs.setString('mcu_gps_history_backup', historyJson);
+      await prefs.setString('mcu_gps_history_backup_date', DateTime.now().toIso8601String());
+      developer.log('Saved ${history.length} GPS points to local storage', name: 'HomeScreen');
+    } catch (e) {
+      developer.log('Error saving GPS history locally: $e', name: 'HomeScreen', error: e);
+    }
+  }
+  
+  Future<void> _loadGpsHistoryBackup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final historyJson = prefs.getString('mcu_gps_history_backup');
+      
+      if (historyJson != null && historyJson.isNotEmpty) {
+        final List<dynamic> decodedHistory = json.decode(historyJson);
+        final List<Map<String, dynamic>> history = decodedHistory.map((item) {
+          return Map<String, dynamic>.from(item);
+        }).toList();
+        
+        if (mounted) {
+          setState(() {
+            _mcuGpsHistory = history.reversed.toList(); // Reverse for display (newest first)
+          });
+        }
+        
+        final backupDate = prefs.getString('mcu_gps_history_backup_date') ?? 'Unknown';
+        developer.log('Loaded ${history.length} GPS points from backup (saved: $backupDate)', name: 'HomeScreen');
+      } else {
+        developer.log('No GPS history backup found', name: 'HomeScreen');
+      }
+    } catch (e) {
+      developer.log('Error loading GPS history backup: $e', name: 'HomeScreen', error: e);
+    }
+  }
+  
+  void _mergeGpsHistory(List<Map<String, dynamic>> newHistory) {
+    if (newHistory.isEmpty && _mcuGpsHistory.isNotEmpty) {
+      // If MCU returns empty but we have saved history, keep the saved history
+      developer.log('MCU returned 0 points, keeping existing ${_mcuGpsHistory.length} saved points', name: 'HomeScreen');
+      return;
+    }
+    
+    // Create a map to track unique points by timestamp
+    Map<int, Map<String, dynamic>> uniquePoints = {};
+    
+    // Add existing saved points (already reversed, so un-reverse for processing)
+    List<Map<String, dynamic>> currentHistory = _mcuGpsHistory.reversed.toList();
+    for (var point in currentHistory) {
+      final timestamp = point['time'] ?? point['timestamp'] ?? 0;
+      uniquePoints[timestamp] = point;
+    }
+    
+    // Add new points from MCU (will overwrite duplicates with latest data)
+    for (var point in newHistory) {
+      final timestamp = point['time'] ?? point['timestamp'] ?? 0;
+      uniquePoints[timestamp] = point;
+    }
+    
+    // Convert back to list and sort by timestamp (newest first)
+    List<Map<String, dynamic>> mergedHistory = uniquePoints.values.toList();
+    mergedHistory.sort((a, b) {
+      final timeA = a['time'] ?? a['timestamp'] ?? 0;
+      final timeB = b['time'] ?? b['timestamp'] ?? 0;
+      return timeB.compareTo(timeA); // Descending order (newest first)
+    });
+    
+    developer.log('Merged history: ${currentHistory.length} saved + ${newHistory.length} new = ${mergedHistory.length} unique points', name: 'HomeScreen');
+    
+    // Update UI
+    setState(() {
+      _mcuGpsHistory = mergedHistory;
+    });
+    
+    // Save the merged history
+    _saveGpsHistoryLocally(mergedHistory.reversed.toList()); // Save in original order
   }
   
   Future<void> _fetchMcuGpsHistory() async {
@@ -119,22 +205,56 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     await Future.delayed(const Duration(seconds: 2));
     
     try {
-      developer.log('Calling readGPSHistory...', name: 'HomeScreen');
-      final history = await _bleService.readGPSHistory();
+      developer.log('Calling readAllGPSHistory for paginated data...', name: 'HomeScreen');
+      final history = await _bleService.readAllGPSHistory();
       
-      developer.log('readGPSHistory returned: ${history?.length ?? "null"} points', name: 'HomeScreen');
+      developer.log('readAllGPSHistory returned: ${history?.length ?? "null"} points', name: 'HomeScreen');
       
       if (mounted && history != null) {
-        developer.log('Setting MCU GPS history with ${history.length} points', name: 'HomeScreen');
+        developer.log('Received ${history.length} points from MCU', name: 'HomeScreen');
         if (history.isNotEmpty) {
           developer.log('First point: ${history.first}', name: 'HomeScreen');
         }
-        // Reverse the history so newest points are first
+        
+        // Use merge logic instead of replacing
+        _mergeGpsHistory(history);
         setState(() {
-          _mcuGpsHistory = history.reversed.toList();
           _isLoadingMcuHistory = false;
         });
-        developer.log('State updated. _mcuGpsHistory now has ${_mcuGpsHistory.length} points (reversed for display)', name: 'HomeScreen');
+        
+        developer.log('After merge: _mcuGpsHistory has ${_mcuGpsHistory.length} points', name: 'HomeScreen');
+        
+        // Clear MCU GPS history after successful sync to free NVS space
+        if (history.length >= 25) { // Only clear if we got substantial data
+          developer.log('Clearing MCU GPS history to free NVS space...', name: 'HomeScreen');
+          // Note: History is already saved in _mergeGpsHistory()
+          final cleared = await _bleService.clearMCUGPSHistory();
+          if (cleared) {
+            developer.log('MCU GPS history cleared successfully', name: 'HomeScreen');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('GPS history synced (${history.length} points) and MCU memory cleared'),
+                  duration: const Duration(seconds: 3),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          } else {
+            developer.log('Failed to clear MCU GPS history', name: 'HomeScreen');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('GPS history synced but failed to clear MCU memory'),
+                  duration: Duration(seconds: 3),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          }
+        } else {
+          developer.log('Only ${history.length} points received, not clearing MCU (threshold: 25)', name: 'HomeScreen');
+        }
       } else {
         developer.log('History is null or component not mounted', name: 'HomeScreen');
         setState(() {
@@ -1233,7 +1353,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 itemCount: _mcuGpsHistory.length,
                                 itemBuilder: (context, index) {
                                   final point = _mcuGpsHistory[index];
-                                  final timestamp = point['timestamp'] ?? 0;
+                                  final timestamp = point['time'] ?? point['timestamp'] ?? 0;
                                   // MCU sends timestamp in milliseconds already
                                   final date = timestamp > 0 
                                     ? DateTime.fromMillisecondsSinceEpoch(timestamp)
@@ -1291,7 +1411,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               const SizedBox(width: 4),
                                               Expanded(
                                                 child: Text(
-                                                  'Lat: ${(point['latitude'] ?? 0).toStringAsFixed(6)}',
+                                                  'Lat: ${(point['lat'] ?? point['latitude'] ?? 0).toStringAsFixed(6)}',
                                                   style: theme.textTheme.bodyMedium,
                                                 ),
                                               ),
@@ -1302,7 +1422,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               const SizedBox(width: 18),
                                               Expanded(
                                                 child: Text(
-                                                  'Lng: ${(point['longitude'] ?? 0).toStringAsFixed(6)}',
+                                                  'Lng: ${(point['lon'] ?? point['longitude'] ?? 0).toStringAsFixed(6)}',
                                                   style: theme.textTheme.bodyMedium,
                                                 ),
                                               ),
@@ -1393,10 +1513,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   void _navigateToGpsPointOnMap(Map<String, dynamic> point) {
-    // Extract coordinates
-    final lat = (point['latitude'] ?? 0).toDouble();
-    final lng = (point['longitude'] ?? 0).toDouble();
-    final timestamp = point['timestamp'] ?? 0;
+    // Extract coordinates - handle both key formats
+    final lat = (point['lat'] ?? point['latitude'] ?? 0).toDouble();
+    final lng = (point['lon'] ?? point['longitude'] ?? 0).toDouble();
+    final timestamp = point['time'] ?? point['timestamp'] ?? 0;
     
     // Switch to map tab
     _tabController.animateTo(0);

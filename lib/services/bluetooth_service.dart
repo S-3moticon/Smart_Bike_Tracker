@@ -227,14 +227,23 @@ class BikeBluetoothService {
         _connectionStateController.add(state);
       });
       
-      // Request larger MTU for config data (default is 23, we need at least 100)
+      // Request larger MTU for DLE support (default is 23, we need 512 for optimal throughput)
       try {
         if (Platform.isAndroid) {
           final mtu = await bikeDevice.device.requestMtu(AppConstants.bleMtuSize);
-          developer.log('MTU negotiated: $mtu bytes', name: 'BLE');
+          developer.log('MTU negotiated: $mtu bytes (DLE enabled for packets up to 251 bytes)', name: 'BLE');
+          
+          // Log DLE status for debugging
+          if (mtu >= 512) {
+            developer.log('DLE: Full support confirmed (MTU=$mtu)', name: 'BLE');
+          } else if (mtu >= 185) {
+            developer.log('DLE: Partial support (MTU=$mtu, falling back to smaller packets)', name: 'BLE');
+          } else {
+            developer.log('DLE: Not supported (MTU=$mtu, using legacy mode)', name: 'BLE');
+          }
         }
       } catch (e) {
-        developer.log('MTU negotiation failed: $e', name: 'BLE');
+        developer.log('MTU negotiation failed: $e (using default MTU)', name: 'BLE');
       }
       
       // Discover services after connection
@@ -416,9 +425,12 @@ class BikeBluetoothService {
                 }
                 
                 String jsonString = String.fromCharCodes(value);
+                developer.log('Received GPS history data: ${value.length} bytes', name: 'BLE-GPSHistory');
+                
                 final history = _parseGPSHistory(jsonString);
                 
                 if (history != null) {
+                  developer.log('Parsed ${history.length} GPS points from history (DLE enabled)', name: 'BLE-GPSHistory');
                   _gpsHistoryController.add(history);
                 }
                 return history;
@@ -441,6 +453,233 @@ class BikeBluetoothService {
     } catch (e) {
       developer.log('Error reading GPS history: $e', name: 'BLE-GPSHistory', error: e);
       return null;
+    }
+  }
+  
+  Future<Map<String, dynamic>?> readGPSHistoryPage(int page) async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-GPSPage');
+        return null;
+      }
+      
+      developer.log('Requesting GPS history page $page', name: 'BLE-GPSPage');
+      
+      // Find the bike tracker service
+      List<BluetoothService> services;
+      try {
+        services = await _connectedDevice!.discoverServices().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            throw TimeoutException('Service discovery timed out');
+          },
+        );
+      } catch (e) {
+        developer.log('Error during service discovery: $e', name: 'BLE-GPSPage');
+        return null;
+      }
+      
+      BluetoothCharacteristic? commandChar;
+      BluetoothCharacteristic? historyChar;
+      
+      for (BluetoothService service in services) {
+        String serviceUuid = service.uuid.toString().toLowerCase();
+        
+        bool isMatch = serviceUuid.contains('1234');
+        
+        if (isMatch) {
+          for (BluetoothCharacteristic characteristic in service.characteristics) {
+            String charUuid = characteristic.uuid.toString().toLowerCase();
+            
+            // Find command characteristic (0x1238)
+            if (charUuid.contains('1238')) {
+              commandChar = characteristic;
+              developer.log('Found command characteristic', name: 'BLE-GPSPage');
+            }
+            
+            // Find history characteristic (0x1239)
+            if (charUuid.contains('1239')) {
+              historyChar = characteristic;
+              developer.log('Found history characteristic', name: 'BLE-GPSPage');
+            }
+          }
+        }
+      }
+      
+      if (commandChar == null || historyChar == null) {
+        developer.log('Required characteristics not found', name: 'BLE-GPSPage');
+        return null;
+      }
+      
+      // Subscribe to history characteristic notifications first
+      if (!historyChar.isNotifying) {
+        await historyChar.setNotifyValue(true);
+        developer.log('Subscribed to history notifications', name: 'BLE-GPSPage');
+      }
+      
+      // Set up completer to wait for notification response
+      final completer = Completer<Map<String, dynamic>?>();
+      StreamSubscription? subscription;
+      
+      // Listen for the notification response
+      subscription = historyChar.lastValueStream.listen((value) {
+        try {
+          if (value.isEmpty) {
+            developer.log('Received empty notification', name: 'BLE-GPSPage');
+            return;
+          }
+          
+          String jsonString = String.fromCharCodes(value);
+          developer.log('Received page data via notification: ${value.length} bytes', name: 'BLE-GPSPage');
+          
+          // Parse and check if this is page data (has "page" field)
+          final Map<String, dynamic> data = json.decode(jsonString);
+          if (data.containsKey('page') && data['page'] == page) {
+            developer.log('Received data for page $page: totalPages=${data['totalPages']}, totalPoints=${data['totalPoints']}', 
+                         name: 'BLE-GPSPage');
+            if (!completer.isCompleted) {
+              completer.complete(data);
+            }
+          }
+        } catch (e) {
+          developer.log('Error parsing notification data: $e', name: 'BLE-GPSPage');
+        }
+      });
+      
+      // Send page request command
+      String command = 'GPS_PAGE:$page';
+      await commandChar.write(utf8.encode(command), withoutResponse: false);
+      developer.log('Sent command: $command', name: 'BLE-GPSPage');
+      
+      // Wait for notification with timeout
+      try {
+        final pageData = await completer.future.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            developer.log('Timeout waiting for page $page notification', name: 'BLE-GPSPage');
+            return null;
+          },
+        );
+        
+        subscription?.cancel();
+        return pageData;
+      } catch (e) {
+        developer.log('Error getting page data: $e', name: 'BLE-GPSPage');
+        subscription?.cancel();
+        return null;
+      }
+    } catch (e) {
+      developer.log('Error in readGPSHistoryPage: $e', name: 'BLE-GPSPage', error: e);
+      return null;
+    }
+  }
+  
+  Future<List<Map<String, dynamic>>?> readAllGPSHistory() async {
+    try {
+      List<Map<String, dynamic>> allPoints = [];
+      int page = 0;
+      bool hasMorePages = true;
+      int totalPages = 0;
+      
+      developer.log('Starting to read all GPS history pages', name: 'BLE-GPSHistory');
+      
+      while (hasMorePages) {
+        final pageData = await readGPSHistoryPage(page);
+        
+        if (pageData == null) {
+          developer.log('Failed to read page $page', name: 'BLE-GPSHistory');
+          hasMorePages = false;
+          break;
+        }
+        
+        // Extract metadata
+        totalPages = pageData['totalPages'] ?? 0;
+        int totalPoints = pageData['totalPoints'] ?? 0;
+        
+        developer.log('Page $page: totalPages=$totalPages, totalPoints=$totalPoints', 
+                     name: 'BLE-GPSHistory');
+        
+        // Extract history points from this page
+        final List<dynamic>? historyList = pageData['history'];
+        if (historyList != null && historyList.isNotEmpty) {
+          for (var item in historyList) {
+            if (item is Map<String, dynamic>) {
+              // Debug: log the actual GPS values
+              if (page == 0 && allPoints.length == 0) {
+                developer.log('First GPS point from page 0: lat=${item['lat']}, lon=${item['lon']}', 
+                             name: 'BLE-GPSHistory');
+              }
+              allPoints.add(item);
+            }
+          }
+          developer.log('Added ${historyList.length} points from page $page', 
+                       name: 'BLE-GPSHistory');
+        }
+        
+        page++;
+        hasMorePages = page < totalPages;
+        
+        // Small delay between page requests to avoid overwhelming MCU
+        if (hasMorePages) {
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      
+      developer.log('Retrieved ${allPoints.length} total GPS points across $page pages', 
+                   name: 'BLE-GPSHistory');
+      
+      // Also emit to stream for real-time updates
+      if (allPoints.isNotEmpty) {
+        _gpsHistoryController.add(allPoints);
+      }
+      
+      return allPoints;
+    } catch (e) {
+      developer.log('Error reading all GPS history: $e', name: 'BLE-GPSHistory', error: e);
+      // Fall back to single page read
+      return await readGPSHistory();
+    }
+  }
+  
+  Future<bool> clearMCUGPSHistory() async {
+    try {
+      if (_connectedDevice == null) {
+        developer.log('No device connected', name: 'BLE-ClearHistory');
+        return false;
+      }
+
+      List<BluetoothService> services = await _connectedDevice!.discoverServices();
+      
+      for (BluetoothService service in services) {
+        String serviceUuid = service.uuid.toString().toLowerCase();
+        
+        // Check if this is the bike tracker service (contains '1234')
+        if (serviceUuid.contains('1234')) {
+          for (BluetoothCharacteristic characteristic in service.characteristics) {
+            String charUuid = characteristic.uuid.toString().toLowerCase();
+            
+            // Check if this is the command characteristic (contains '1238')
+            if (charUuid.contains('1238')) {
+              developer.log('Found command characteristic, sending CLEAR_HISTORY command', name: 'BLE-ClearHistory');
+              
+              // Send clear history command
+              await characteristic.write(utf8.encode('CLEAR_HISTORY'));
+              
+              // Wait a bit for MCU to process
+              await Future.delayed(Duration(milliseconds: 500));
+              
+              developer.log('GPS history clear command sent successfully', name: 'BLE-ClearHistory');
+              return true;
+            }
+          }
+        }
+      }
+      
+      developer.log('Command characteristic not found', name: 'BLE-ClearHistory');
+      return false;
+    } catch (e) {
+      developer.log('Error clearing MCU GPS history: $e', name: 'BLE-ClearHistory', error: e);
+      return false;
     }
   }
   
@@ -604,9 +843,14 @@ class BikeBluetoothService {
               try {
                 final mtu = await _connectedDevice!.mtu.first;
                 developer.log('Current MTU: $mtu', name: 'BLE-Config');
+                
+                // With DLE support, we should have MTU >= 512
+                // Only use compact format for very old devices
                 if (mtu < 100) {
                   useCompactFormat = true;
-                  developer.log('Using compact format due to small MTU', name: 'BLE-Config');
+                  developer.log('Using compact format due to small MTU (legacy device)', name: 'BLE-Config');
+                } else if (mtu >= AppConstants.bleMtuSize) {
+                  developer.log('Full DLE support detected, using standard format', name: 'BLE-Config');
                 }
               } catch (e) {
                 developer.log('Could not get MTU: $e', name: 'BLE-Config');

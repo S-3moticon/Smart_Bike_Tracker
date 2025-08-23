@@ -321,10 +321,23 @@ void initGPSHistory() {
  * Log a GPS point from GPSData structure
  */
 bool logGPSPoint(const GPSData& data, uint8_t source) {
-  if (!data.valid) return false;
+  if (!data.valid) {
+    Serial.println("⚠️ Skipping invalid GPS data");
+    return false;
+  }
+  
+  Serial.print("📍 Converting GPS strings: lat='");
+  Serial.print(data.latitude);
+  Serial.print("', lon='");
+  Serial.print(data.longitude);
+  Serial.println("'");
   
   float lat = data.latitude.toFloat();
   float lon = data.longitude.toFloat();
+  
+  if (lat == 0.0 && lon == 0.0) {
+    Serial.println("⚠️ GPS conversion resulted in 0,0 - strings may be empty or invalid");
+  }
   
   // Use the timestamp from GPSData if available
   gpsLogPrefs.begin(GPS_LOG_NAMESPACE, false);
@@ -338,6 +351,15 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   // Store the GPS point with proper timestamp
   gpsLogPrefs.putFloat(keyLat.c_str(), lat);
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
+  
+  Serial.print("📍 Storing GPS from data: index=");
+  Serial.print(logIndex);
+  Serial.print(", lat=");
+  Serial.print(lat, 7);
+  Serial.print(", lon=");
+  Serial.print(lon, 7);
+  Serial.print(", src=");
+  Serial.println(source);
   // Store 64-bit timestamp as two 32-bit values
   String keyTimeHi = "timeH_" + String(logIndex);
   String keyTimeLo = "timeL_" + String(logIndex);
@@ -376,6 +398,15 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
   // Store the GPS point
   gpsLogPrefs.putFloat(keyLat.c_str(), lat);
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
+  
+  Serial.print("📍 Storing GPS: index=");
+  Serial.print(logIndex);
+  Serial.print(", lat=");
+  Serial.print(lat, 7);
+  Serial.print(", lon=");
+  Serial.print(lon, 7);
+  Serial.print(", src=");
+  Serial.println(source);
   
   // For phone GPS (source 0), use an estimated Unix timestamp
   uint64_t timestamp;
@@ -454,6 +485,20 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
   entry.lat = gpsLogPrefs.getFloat(keyLat.c_str(), 0);
   entry.lon = gpsLogPrefs.getFloat(keyLon.c_str(), 0);
   
+  // Debug logging
+  Serial.print("     Reading index ");
+  Serial.print(index);
+  Serial.print(" -> actual ");
+  Serial.print(actualIndex);
+  Serial.print(": ");
+  Serial.print(keyLat);
+  Serial.print("=");
+  Serial.print(entry.lat, 7);
+  Serial.print(", ");
+  Serial.print(keyLon);
+  Serial.print("=");
+  Serial.println(entry.lon, 7);
+  
   // Read 64-bit timestamp from two 32-bit values
   uint32_t timestamp_hi = gpsLogPrefs.getULong(keyTimeHi.c_str(), 0);
   uint32_t timestamp_lo = gpsLogPrefs.getULong(keyTimeLo.c_str(), 0);
@@ -503,6 +548,80 @@ String getGPSHistoryJSON(int maxPoints) {
   }
   
   json += "],\"count\":" + String(count) + "}";
+  
+  return json;
+}
+
+/*
+ * Get GPS history page as JSON string for pagination
+ */
+String getGPSHistoryPageJSON(int page, int pointsPerPage) {
+  String json = "{\"history\":[";
+  
+  int count = getGPSHistoryCount();
+  // Calculate totalPages first
+  int totalPages = count > 0 ? (count + pointsPerPage - 1) / pointsPerPage : 0;
+  int startIdx = page * pointsPerPage;
+  int endIdx = min(startIdx + pointsPerPage, count);
+  
+  // Check if page is valid
+  if (page < 0 || page >= totalPages || count == 0) {
+    json += "],\"page\":" + String(page) + ",";
+    json += "\"totalPages\":" + String(totalPages) + ",";
+    json += "\"totalPoints\":" + String(count) + ",";
+    json += "\"pointsPerPage\":" + String(pointsPerPage) + "}";
+    return json;
+  }
+  
+  bool firstEntry = true;
+  int validPoints = 0;
+  for (int i = startIdx; i < endIdx; i++) {
+    GPSLogEntry entry;
+    if (getGPSLogEntry(i, entry)) {
+      // Debug log
+      Serial.print("   Point ");
+      Serial.print(i);
+      Serial.print(": lat=");
+      Serial.print(entry.lat, 7);
+      Serial.print(", lon=");
+      Serial.print(entry.lon, 7);
+      Serial.print(", src=");
+      Serial.println(entry.source);
+      
+      // Only add valid GPS points (not 0,0)
+      if (entry.lat != 0.0 || entry.lon != 0.0) {
+        if (!firstEntry) json += ",";
+        
+        json += "{";
+        json += "\"lat\":" + String(entry.lat, 7) + ",";
+        json += "\"lon\":" + String(entry.lon, 7) + ",";
+        json += "\"time\":" + String(entry.timestamp) + ",";
+        json += "\"src\":" + String(entry.source);
+        json += "}";
+        firstEntry = false;
+        validPoints++;
+      }
+    }
+  }
+  
+  Serial.print("   Added ");
+  Serial.print(validPoints);
+  Serial.println(" valid points to page");
+  
+  json += "],";
+  json += "\"page\":" + String(page) + ",";
+  json += "\"totalPages\":" + String(totalPages) + ",";
+  json += "\"totalPoints\":" + String(count) + ",";
+  json += "\"pointsPerPage\":" + String(pointsPerPage) + "}";
+  
+  Serial.print("   JSON response: page=");
+  Serial.print(page);
+  Serial.print(", totalPages=");
+  Serial.print(totalPages);
+  Serial.print(", totalPoints=");
+  Serial.print(count);
+  Serial.print(", validPoints=");
+  Serial.println(validPoints);
   
   return json;
 }

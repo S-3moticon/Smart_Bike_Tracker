@@ -8,7 +8,9 @@ class AppConstants {
   static const int bleConnectionTimeout = 10; // seconds
   static const int bleScanTimeout = 10; // seconds
   static const int bleReconnectionInterval = 5; // seconds
-  static const int bleMtuSize = 185; // bytes
+  static const int bleMtuSize = 512; // bytes - increased for DLE support
+  static const int bleDlePacketSize = 251; // bytes - maximum DLE payload
+  static const int bleLegacyMtuSize = 185; // bytes - fallback if DLE not supported
   
   // BLE UUIDs (from MCU ble_protocol.h)
   static const String serviceUuid = '00001234-0000-1000-8000-00805f9b34fb';
