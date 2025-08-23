@@ -54,6 +54,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Selected location for map navigation
   LatLng? _selectedMapLocation;
   
+  // Clicked GPS history locations that should be shown on map
+  Set<LatLng> _clickedHistoryLocations = {};
+  
   // Tab controller for map/list/mcu view
   late TabController _tabController;
   
@@ -291,6 +294,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _connectingDeviceId = null;
           // Clear MCU history on disconnect
           _mcuGpsHistory = [];
+          // Clear clicked history locations on disconnect
+          _clickedHistoryLocations.clear();
           // Stop location tracking when disconnected
           _stopLocationTracking();
           _checkBluetoothAndScan();
@@ -1127,6 +1132,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           isTracking: _isTrackingLocation,
                           mcuGpsPoints: _mcuGpsHistory,
                           selectedLocation: _selectedMapLocation,
+                          clickedHistoryLocations: _clickedHistoryLocations,
                           onLocationSelected: () {
                             // Clear the selected location after navigating
                             setState(() {
@@ -1484,10 +1490,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     // Switch to map tab
     _tabController.animateTo(0);
     
-    // Call the map widget to zoom to this location
-    // We'll need to pass this location to the map widget
+    final locationLatLng = LatLng(location.latitude, location.longitude);
+    
+    // Add this location to clicked history set
     setState(() {
-      _selectedMapLocation = LatLng(location.latitude, location.longitude);
+      _selectedMapLocation = locationLatLng;
+      _clickedHistoryLocations.add(locationLatLng);
     });
     
     // Show a snackbar with location details
@@ -1521,9 +1529,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     // Switch to map tab
     _tabController.animateTo(0);
     
-    // Navigate to this GPS point on the map
+    final locationLatLng = LatLng(lat, lng);
+    
+    // Add this GPS point to clicked history set
     setState(() {
-      _selectedMapLocation = LatLng(lat, lng);
+      _selectedMapLocation = locationLatLng;
+      _clickedHistoryLocations.add(locationLatLng);
     });
     
     // Format timestamp for display

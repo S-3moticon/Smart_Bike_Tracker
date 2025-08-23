@@ -16,6 +16,7 @@ class LocationMap extends StatefulWidget {
   final bool isTracking;
   final List<Map<String, dynamic>>? mcuGpsPoints;
   final LatLng? selectedLocation;
+  final Set<LatLng>? clickedHistoryLocations;
   final VoidCallback? onLocationSelected;
   
   const LocationMap({
@@ -25,6 +26,7 @@ class LocationMap extends StatefulWidget {
     required this.isTracking,
     this.mcuGpsPoints,
     this.selectedLocation,
+    this.clickedHistoryLocations,
     this.onLocationSelected,
   });
   
@@ -224,7 +226,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   List<Marker> _buildMarkers() {
     final markers = <Marker>[];
     
-    // Add current location marker
+    // Add current location marker (always shown)
     if (widget.currentLocation != null) {
       markers.add(
         Marker(
@@ -260,54 +262,20 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
       );
     }
     
-    // Add history markers (show last 10 points)
-    final historyToShow = widget.locationHistory.take(10).toList();
-    for (int i = 0; i < historyToShow.length; i++) {
-      final location = historyToShow[i];
-      final opacity = 1.0 - (i * 0.08); // Fade older points
-      
-      markers.add(
-        Marker(
-          point: LatLng(location.latitude, location.longitude),
-          width: 20,
-          height: 20,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.secondary.withValues(alpha: opacity),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: opacity),
-                width: 2,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-    
-    // Add MCU GPS points as individual markers (no trace)
-    if (widget.mcuGpsPoints != null) {
-      for (int i = 0; i < widget.mcuGpsPoints!.length; i++) {
-        final point = widget.mcuGpsPoints![i];
-        final lat = point['lat'] ?? point['latitude'] ?? 0.0;
-        final lng = point['lon'] ?? point['longitude'] ?? 0.0;
-        
-        // Skip invalid points
-        if (lat == 0.0 && lng == 0.0) continue;
-        
-        // Style differently from phone GPS markers
-        // Use a Google Maps-style pin marker for MCU GPS points
+    // Add clicked history locations as markers (same style as latest GPS)
+    if (widget.clickedHistoryLocations != null) {
+      for (final location in widget.clickedHistoryLocations!) {
         markers.add(
           Marker(
-            point: LatLng(lat, lng),
-            width: 32,
-            height: 40,
+            point: location,
+            width: 36,
+            height: 44,
             child: Stack(
               alignment: Alignment.topCenter,
               children: [
-                // Pin shape with shadow
+                // Pin shape with shadow (same as latest GPS marker)
                 CustomPaint(
-                  size: const Size(32, 40),
+                  size: const Size(36, 44),
                   painter: _MapPinPainter(
                     color: Colors.orange,
                     borderColor: Colors.white,
@@ -315,11 +283,53 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 ),
                 // Icon inside the pin
                 const Positioned(
-                  top: 6,
+                  top: 8,
                   child: Icon(
                     Icons.satellite_alt,
                     color: Colors.white,
-                    size: 16,
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    
+    // Add only the LATEST MCU GPS point (not all history)
+    if (widget.mcuGpsPoints != null && widget.mcuGpsPoints!.isNotEmpty) {
+      // Get only the first (latest) point
+      final latestPoint = widget.mcuGpsPoints!.first;
+      final lat = latestPoint['lat'] ?? latestPoint['latitude'] ?? 0.0;
+      final lng = latestPoint['lon'] ?? latestPoint['longitude'] ?? 0.0;
+      
+      // Skip invalid points
+      if (lat != 0.0 || lng != 0.0) {
+        // Use a Google Maps-style pin marker for the latest MCU GPS point
+        markers.add(
+          Marker(
+            point: LatLng(lat, lng),
+            width: 36,
+            height: 44,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                // Pin shape with shadow
+                CustomPaint(
+                  size: const Size(36, 44),
+                  painter: _MapPinPainter(
+                    color: Colors.orange,
+                    borderColor: Colors.white,
+                  ),
+                ),
+                // Icon inside the pin
+                const Positioned(
+                  top: 8,
+                  child: Icon(
+                    Icons.satellite_alt,
+                    color: Colors.white,
+                    size: 18,
                   ),
                 ),
               ],
@@ -333,15 +343,9 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   }
   
   List<LatLng> _buildPolylinePoints() {
-    if (widget.locationHistory.isEmpty) return [];
-    
-    // Create trail from last 20 points
-    return widget.locationHistory
-        .take(20)
-        .map((loc) => LatLng(loc.latitude, loc.longitude))
-        .toList()
-        .reversed
-        .toList();
+    // Don't show polyline trails anymore since we're only showing latest markers
+    // and clicked history points
+    return [];
   }
   
   @override
