@@ -45,6 +45,12 @@ class AppConstants {
   static const Duration animationDuration = Duration(milliseconds: 300);
   static const Duration connectionStabilizationDelay = Duration(seconds: 1);
   
+  // Motion Sensitivity
+  static const double defaultMotionSensitivity = 0.5; // Medium sensitivity
+  static const double minMotionSensitivity = 0.1;
+  static const double maxMotionSensitivity = 1.0;
+  static const int motionSensitivityDivisions = 9; // Creates 10 discrete steps
+  
   // Storage Keys
   static const String keyLastDevice = 'last_connected_device_id';
   static const String keyLastDeviceName = 'last_connected_device_name';
@@ -52,6 +58,7 @@ class AppConstants {
   static const String keyConfigPhone = 'config_phone';
   static const String keyConfigInterval = 'config_interval';
   static const String keyConfigAlerts = 'config_alerts';
+  static const String keyMotionSensitivity = 'config_motion_sensitivity';
   static const String keyLocationHistory = 'location_history';
   static const String keyOfflineMapTiles = 'offline_map_tiles';
 }

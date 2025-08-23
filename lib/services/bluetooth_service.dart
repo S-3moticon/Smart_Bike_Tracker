@@ -789,6 +789,7 @@ class BikeBluetoothService {
     required String phoneNumber,
     required int updateInterval,
     required bool alertEnabled,
+    double? motionSensitivity,
   }) async {
     try {
       if (_connectedDevice == null) {
@@ -861,11 +862,13 @@ class BikeBluetoothService {
               if (useCompactFormat) {
                 // Compact format: remove spaces and use short keys
                 final alertStr = alertEnabled ? '1' : '0';
-                jsonString = '{"p":"$phoneNumber","i":$updateInterval,"a":$alertStr}';
+                final sensitivityStr = motionSensitivity != null ? ',"s":${motionSensitivity.toStringAsFixed(1)}' : '';
+                jsonString = '{"p":"$phoneNumber","i":$updateInterval,"a":$alertStr$sensitivityStr}';
               } else {
                 // Full format
                 final alertStr = alertEnabled ? 'true' : 'false';
-                jsonString = '{"phone_number":"$phoneNumber","update_interval":$updateInterval,"alert_enabled":$alertStr}';
+                final sensitivityStr = motionSensitivity != null ? ',"motion_sensitivity":${motionSensitivity.toStringAsFixed(1)}' : '';
+                jsonString = '{"phone_number":"$phoneNumber","update_interval":$updateInterval,"alert_enabled":$alertStr$sensitivityStr}';
               }
               
               developer.log('Sending config JSON: $jsonString', name: 'BLE-Config');

@@ -53,9 +53,9 @@
 #define LSM6DSL_MD2_CFG         0x5F  // INT2 routing
 
 // Motion detection configuration
-#define MOTION_THRESHOLD_LOW    0.30f  // Low threshold in g (increased from 0.10)
-#define MOTION_THRESHOLD_MED    0.50f  // Medium threshold in g  
-#define MOTION_THRESHOLD_HIGH   0.75f  // High threshold in g
+#define MOTION_THRESHOLD_LOW    1.00f  // Low threshold in g (high sensitivity)
+#define MOTION_THRESHOLD_MED    1.50f  // Medium threshold in g (medium sensitivity)
+#define MOTION_THRESHOLD_HIGH   2.00f  // High threshold in g (low sensitivity - max)
 #define NO_MOTION_SLEEP_TIME    10000  // 10 seconds to sleep
 
 // Accelerometer data structure
@@ -104,6 +104,9 @@ public:
   void configureWakeOnMotion();
   void clearMotionInterrupts();
   uint8_t getWakeSource();
+  
+  // Motion sensitivity
+  void setMotionThreshold(float threshold);
   
   // Get current acceleration data
   AccelData getAcceleration() { return currentAccel; }

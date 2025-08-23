@@ -65,6 +65,7 @@ RTC_DATA_ATTR bool hasValidConfig = false;
 RTC_DATA_ATTR bool motionWakeNeedsSMS = false;
 RTC_DATA_ATTR bool motionSensorInitialized = false;
 RTC_DATA_ATTR bool firstDisconnectLogged = false;
+RTC_DATA_ATTR float motionSensitivity = 0.5;  // Default medium sensitivity
 
 // Boot Configuration
 #define BOOT_BLE_GRACE_PERIOD 30000
@@ -79,6 +80,9 @@ void testGPSAndSMS();
 void syncGPSHistory();
 void sendGPSHistoryPage(int page);
 void readSensors();
+void applyMotionSensitivity();
+void stopBLEAdvertising();
+void startBLEAdvertising();
 
 // ============================================================================
 // BLE Server Callbacks
@@ -181,6 +185,29 @@ class ConfigCharCallbacks: public BLECharacteristicCallbacks {
           configChanged = true;
         }
         
+        // Extract motion sensitivity (optional field)
+        int sensitivityStart = isCompact ? jsonStr.indexOf("\"s\":") : jsonStr.indexOf("\"motion_sensitivity\":");
+        if (sensitivityStart >= 0) {
+          sensitivityStart += isCompact ? 4 : 21;  // Length of key + colon
+          int sensitivityEnd = jsonStr.indexOf(',', sensitivityStart);
+          if (sensitivityEnd < 0) sensitivityEnd = jsonStr.indexOf('}', sensitivityStart);
+          if (sensitivityEnd > sensitivityStart) {
+            String sensitivityStr = jsonStr.substring(sensitivityStart, sensitivityEnd);
+            float newSensitivity = sensitivityStr.toFloat();
+            if (newSensitivity >= 0.1 && newSensitivity <= 1.0) {
+              motionSensitivity = newSensitivity;
+              configChanged = true;
+              Serial.print("🎚️ Motion sensitivity set to: ");
+              Serial.println(motionSensitivity);
+              
+              // Apply sensitivity to motion sensor if initialized
+              if (motionSensorInitialized) {
+                applyMotionSensitivity();
+              }
+            }
+          }
+        }
+        
         // Save configuration if changed
         if (configChanged) {
           saveConfiguration();
@@ -252,6 +279,7 @@ void loadConfiguration() {
   preferences.getString("phone", config.phoneNumber, sizeof(config.phoneNumber));
   config.updateInterval = preferences.getUShort("interval", 600);  // Default 10 minutes
   config.alertEnabled = preferences.getBool("alerts", true);       // Default enabled
+  motionSensitivity = preferences.getFloat("sensitivity", 0.5);    // Default medium
   preferences.end();
 }
 
@@ -260,6 +288,7 @@ void saveConfiguration() {
   preferences.putString("phone", config.phoneNumber);
   preferences.putUShort("interval", config.updateInterval);
   preferences.putBool("alerts", config.alertEnabled);
+  preferences.putFloat("sensitivity", motionSensitivity);
   preferences.end();
 }
 
@@ -268,16 +297,23 @@ void clearConfiguration() {
   memset(config.phoneNumber, 0, sizeof(config.phoneNumber));
   config.updateInterval = 600;  // Reset to default 10 minutes
   config.alertEnabled = true;   // Reset to default enabled
+  motionSensitivity = 0.5;      // Reset to medium sensitivity
   
   // Clear from persistent storage
   preferences.begin("bike-tracker", false);
   preferences.clear();
   preferences.end();
   
+  // Apply default sensitivity if sensor is initialized
+  if (motionSensorInitialized) {
+    applyMotionSensitivity();
+  }
+  
   Serial.println("✅ Configuration cleared");
   Serial.println("  Phone: (empty)");
   Serial.println("  Interval: 300 seconds");
   Serial.println("  Alerts: Enabled");
+  Serial.println("  Motion Sensitivity: Medium");
 }
 
 // ============================================================================
@@ -573,6 +609,63 @@ void sendGPSHistoryPage(int page) {
 }
 
 // ============================================================================
+// BLE Control Functions
+// ============================================================================
+void stopBLEAdvertising() {
+  if (pServer != nullptr) {
+    pServer->getAdvertising()->stop();
+    Serial.println("🔷 BLE advertising stopped");
+  }
+}
+
+void startBLEAdvertising() {
+  if (pServer != nullptr) {
+    pServer->startAdvertising();
+    Serial.println("🔷 BLE advertising started");
+  }
+}
+
+// ============================================================================
+// Motion Sensitivity Management
+// ============================================================================
+void applyMotionSensitivity() {
+  if (!motionSensorInitialized) return;
+  
+  // Map sensitivity value (0.1-1.0) to threshold
+  // Note: Lower sensitivity value = higher threshold (less sensitive)
+  // Higher sensitivity value = lower threshold (more sensitive)
+  float threshold;
+  
+  if (motionSensitivity <= 0.3) {
+    // Low sensitivity - use high threshold
+    threshold = MOTION_THRESHOLD_HIGH;  // 2.00g
+    Serial.println("🎚️ Motion: Low sensitivity (High threshold: 2.00g)");
+  } else if (motionSensitivity <= 0.7) {
+    // Medium sensitivity - use medium threshold
+    threshold = MOTION_THRESHOLD_MED;   // 1.50g
+    Serial.println("🎚️ Motion: Medium sensitivity (Medium threshold: 1.50g)");
+  } else {
+    // High sensitivity - use low threshold
+    threshold = MOTION_THRESHOLD_LOW;   // 1.00g
+    Serial.println("🎚️ Motion: High sensitivity (Low threshold: 1.00g)");
+  }
+  
+  // Apply the threshold to the motion sensor
+  motionSensor.setMotionThreshold(threshold);
+}
+
+// Get current motion threshold based on sensitivity
+float getCurrentMotionThreshold() {
+  if (motionSensitivity <= 0.3) {
+    return MOTION_THRESHOLD_HIGH;  // 2.00g
+  } else if (motionSensitivity <= 0.7) {
+    return MOTION_THRESHOLD_MED;   // 1.50g
+  } else {
+    return MOTION_THRESHOLD_LOW;   // 1.00g
+  }
+}
+
+// ============================================================================
 // SETUP
 // ============================================================================
 void setup() {
@@ -664,21 +757,33 @@ void setup() {
   
   // Initialize modules based on wake reason
   if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER && disconnectSMSSent) {
-    // Only initialize SIM7070G for timer wake SMS sending
+    // Initialize SIM7070G for timer wake SMS sending
     initializeSIM7070G();
   } else {
-    // Initialize motion sensor only
+    // Initialize motion sensor
     if (motionSensor.begin()) {
       Serial.println("✅ LSM6DSL ready");
       lastMotionTime = millis();
       motionSensorInitialized = true;
+      applyMotionSensitivity();  // Apply configured sensitivity
     } else {
       Serial.println("⚠️ LSM6DSL disabled");
       motionSensorInitialized = false;
     }
     
-    // SIM7070G will be initialized only when GPS acquisition is needed
-    Serial.println("📡 SIM7070G: On-demand init");
+    // Initialize SIM7070G if we have a valid configuration (for potential SMS alerts)
+    if (hasValidConfig && wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
+      Serial.println("📡 Initializing SIM7070G (config detected)...");
+      if (initializeSIM7070G()) {
+        // Put module in low power mode until needed
+        disableRF();
+        Serial.println("📡 SIM7070G ready (RF disabled until needed)");
+      } else {
+        Serial.println("⚠️ SIM7070G init failed - SMS alerts disabled");
+      }
+    } else {
+      Serial.println("📡 SIM7070G: On-demand init");
+    }
   }
   
   Serial.println("📡 Ready\n");
@@ -710,8 +815,10 @@ void loop() {
     }
     // Check if grace period expired
     else if (currentTime - bootTime > BOOT_BLE_GRACE_PERIOD) {
-      Serial.println("⏱️ Grace period expired");
+      Serial.println("⏱️ Grace period expired - Stopping BLE");
       gracePeriodActive = false;
+      // Stop BLE advertising to save power
+      stopBLEAdvertising();
       // Device will now wait for motion before sending any SMS
     }
     else {
@@ -730,6 +837,9 @@ void loop() {
   // Handle timer wake - send SMS and return to sleep
   if (isTimerWake) {
     if (config.alertEnabled && strlen(config.phoneNumber) > 0) {
+      // Make sure BLE is off during SMS operations
+      stopBLEAdvertising();
+      
       unsigned long currentTime = millis();
       bool gpsAcquired = acquireGPSFix(currentGPS, 30);
       if (gpsAcquired) {
@@ -759,15 +869,17 @@ void loop() {
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
     // BLE just disconnected
-    Serial.println("🔴 BLE Disconnected - Preparing for SMS mode");
+    Serial.println("🔴 BLE Disconnected - Stopping BLE advertising");
+    
+    // Stop BLE advertising to save power
+    stopBLEAdvertising();
     
     // Initialize motion sensor if needed
     if (!motionSensorInitialized && motionSensor.begin()) {
       motionSensorInitialized = true;
+      applyMotionSensitivity();  // Apply configured sensitivity
     }
     
-    delay(500);
-    pServer->startAdvertising();
     oldDeviceConnected = deviceConnected;
     
     // Only reset these flags if we haven't sent first SMS yet
@@ -793,6 +905,7 @@ void loop() {
     // Initialize motion sensor if needed
     if (!motionSensorInitialized && motionSensor.begin()) {
       motionSensorInitialized = true;
+      applyMotionSensitivity();  // Apply configured sensitivity
       lastMotionTime = millis();
     }
     
@@ -851,6 +964,9 @@ void loop() {
     // PRIORITY: Check if we woke from motion and need to send SMS immediately
     if (motionWakeNeedsSMS) {
       Serial.println("\n📱 Motion wake detected - Sending initial SMS now...");
+      
+      // Make sure BLE is off during SMS operations
+      stopBLEAdvertising();
       
       // Try to get current GPS location
       bool gpsAcquired = false;
@@ -932,35 +1048,49 @@ void loop() {
     
     if (shouldSendSMS) {
       
-      // Try to get current GPS location
-      bool gpsAcquired = (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) ?
-        acquireGPSFix(currentGPS, 30) : true;
+      // Stop BLE advertising before SMS operations
+      stopBLEAdvertising();
       
-      if (gpsAcquired && !currentGPS.valid) {
-        status.lastGPSTime = currentTime;
-        saveGPSData(currentGPS);
-        logGPSPoint(currentGPS, 2);
+      // Ensure SIM7070G is initialized before attempting to send SMS
+      if (!isSIM7070GInitialized()) {
+        Serial.println("📡 Initializing SIM7070G for SMS...");
+        if (!initializeSIM7070G()) {
+          Serial.println("❌ Failed to initialize SIM7070G - Cannot send SMS");
+          shouldSendSMS = false;
+        }
       }
       
-      // Send SMS with location (current or last known)
-      if (gpsAcquired || currentGPS.valid) {
-        if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
-          Serial.println("✅ Location SMS sent successfully!");
-          disconnectSMSSent = true;
-          lastDisconnectSMS = currentTime;
-          lastSMSTime = currentTime;
-        } else {
-          Serial.println("❌ Failed to send location SMS");
-        }
-      } else {
-        // No GPS available
-        String message = "Bike Alert - No GPS\n";
-        message += status.userPresent ? "User: Present\n" : "User: Away\n";
-        message += "Interval: " + String(config.updateInterval) + "s";
+      if (shouldSendSMS) {
+        // Try to get current GPS location
+        bool gpsAcquired = (!currentGPS.valid || (currentTime - status.lastGPSTime > 300000)) ?
+          acquireGPSFix(currentGPS, 30) : true;
         
-        if (sendSMS(config.phoneNumber, message)) {
-          disconnectSMSSent = true;
-          lastDisconnectSMS = currentTime;
+        if (gpsAcquired && !currentGPS.valid) {
+          status.lastGPSTime = currentTime;
+          saveGPSData(currentGPS);
+          logGPSPoint(currentGPS, 2);
+        }
+        
+        // Send SMS with location (current or last known)
+        if (gpsAcquired || currentGPS.valid) {
+          if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
+            Serial.println("✅ Location SMS sent successfully!");
+            disconnectSMSSent = true;
+            lastDisconnectSMS = currentTime;
+            lastSMSTime = currentTime;
+          } else {
+            Serial.println("❌ Failed to send location SMS");
+          }
+        } else {
+          // No GPS available
+          String message = "Bike Alert - No GPS\n";
+          message += status.userPresent ? "User: Present\n" : "User: Away\n";
+          message += "Interval: " + String(config.updateInterval) + "s";
+          
+          if (sendSMS(config.phoneNumber, message)) {
+            disconnectSMSSent = true;
+            lastDisconnectSMS = currentTime;
+          }
         }
       }
     }
@@ -1060,7 +1190,7 @@ void loop() {
           bool realMotion = false;
           if (motionSensorInitialized) {
             for (int i = 0; i < 5 && !realMotion; i++) {
-              realMotion = (motionSensor.getMotionDelta() > MOTION_THRESHOLD_LOW);
+              realMotion = (motionSensor.getMotionDelta() > getCurrentMotionThreshold());
               if (!realMotion) delay(50);
             }
           }
@@ -1083,13 +1213,22 @@ void loop() {
       if (shouldStayAwake) {
         inSleepMode = false;
         
-        // Re-initialize SIM7070G after wake from sleep
-        Serial.println("🔄 Re-initializing SIM7070G after wake...");
-        if (initializeSIM7070G()) {
-          Serial.println("✅ SIM7070G re-initialized");
-        } else {
-          Serial.println("⚠️ SIM7070G re-initialization failed");
+        // Initialize or re-initialize SIM7070G after wake from sleep for SMS
+        if (!disconnectSMSSent && motionWakeNeedsSMS) {
+          Serial.println("🔄 Initializing SIM7070G for motion alert SMS...");
+          // Keep BLE off - no advertising after disconnect
+          
+          if (initializeSIM7070G()) {
+            Serial.println("✅ SIM7070G initialized for SMS");
+            // Enable RF for SMS sending
+            enableRF();
+          } else {
+            Serial.println("⚠️ SIM7070G initialization failed - SMS disabled");
+            motionWakeNeedsSMS = false;  // Clear flag since we can't send SMS
+            // BLE remains off - no restart
+          }
         }
+        // No BLE restart in any wake scenario - stays off after disconnect
       } else {
         // False wake - keep sleep mode active to go back to sleep
         inSleepMode = true;

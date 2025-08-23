@@ -32,11 +32,13 @@ class DataFormats {
     required String phoneNumber,
     required int updateInterval,
     required bool alertEnabled,
+    double? motionSensitivity,
   }) {
     return {
       'phone_number': phoneNumber,
       'update_interval': updateInterval,
       'alert_enabled': alertEnabled,
+      if (motionSensitivity != null) 'motion_sensitivity': motionSensitivity,
     };
   }
 

@@ -298,6 +298,25 @@ void LSM6DSL::configureWakeOnMotion() {
 }
 
 /*
+ * Set motion detection threshold
+ */
+void LSM6DSL::setMotionThreshold(float threshold) {
+  // Map threshold in g to register value
+  // Register value = threshold * 64 / 2g full scale
+  // For 2g range: 1 LSB = 0.03125g
+  uint8_t regValue = (uint8_t)(threshold * 64.0f / 2.0f);
+  
+  // Clamp to valid range (6 bits)
+  if (regValue > 0x3F) regValue = 0x3F;
+  if (regValue < 0x01) regValue = 0x01;
+  
+  // Write to wake-up threshold register
+  writeRegister(LSM6DSL_WAKE_UP_THS, regValue);
+  
+  Serial.printf("Motion threshold set to %.2fg (register: 0x%02X)\n", threshold, regValue);
+}
+
+/*
  * Clear motion interrupt flags
  */
 void LSM6DSL::clearMotionInterrupts() {

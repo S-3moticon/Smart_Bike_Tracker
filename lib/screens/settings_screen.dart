@@ -25,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _alertsEnabled = true;
   bool _isSaving = false;
   bool _isLoading = true;
+  double _motionSensitivity = AppConstants.defaultMotionSensitivity;
   
   // Use predefined interval options from constants
   final List<int> _intervalOptions = AppConstants.smsIntervalPresets;
@@ -111,6 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _intervalController.text = (prefs.getInt(AppConstants.keyConfigInterval) ?? AppConstants.defaultSmsInterval).toString();
         _alertsEnabled = prefs.getBool(AppConstants.keyConfigAlerts) ?? true;
+        _motionSensitivity = prefs.getDouble(AppConstants.keyMotionSensitivity) ?? AppConstants.defaultMotionSensitivity;
         _isLoading = false;
       });
       
@@ -157,6 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await prefs.setString(AppConstants.keyConfigPhone, phoneNumber);
       await prefs.setInt(AppConstants.keyConfigInterval, updateInterval);
       await prefs.setBool(AppConstants.keyConfigAlerts, _alertsEnabled);
+      await prefs.setDouble(AppConstants.keyMotionSensitivity, _motionSensitivity);
       
       // Update phone number history
       if (phoneNumber.isNotEmpty && !_phoneNumberHistory.contains(phoneNumber)) {
@@ -175,6 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         phoneNumber: phoneNumber,
         updateInterval: updateInterval,
         alertEnabled: _alertsEnabled,
+        motionSensitivity: _motionSensitivity,
       );
       
       if (!mounted) return;
@@ -250,6 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await prefs.remove(AppConstants.keyConfigPhone);
       await prefs.remove(AppConstants.keyConfigInterval);
       await prefs.remove(AppConstants.keyConfigAlerts);
+      await prefs.remove(AppConstants.keyMotionSensitivity);
       
       // Optionally clear phone history
       if (!mounted) return;
@@ -290,6 +295,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _phoneController.clear();
         _intervalController.text = AppConstants.defaultSmsInterval.toString();
         _alertsEnabled = false;
+        _motionSensitivity = AppConstants.defaultMotionSensitivity;
         _selectedCountryCode = '+1';
         _isSaving = false;
       });
@@ -439,6 +445,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _phoneNumberError = null;
     });
     return true;
+  }
+  
+  String _getSensitivityLabel(double sensitivity) {
+    if (sensitivity <= 0.3) {
+      return 'Low';
+    } else if (sensitivity <= 0.7) {
+      return 'Medium';
+    } else {
+      return 'High';
+    }
+  }
+  
+  String _getSensitivityDescription(double sensitivity) {
+    if (sensitivity <= 0.3) {
+      return '• Low: Detects only extreme impacts (2.0g threshold)\n'
+             '• Best for very rough terrain or off-road use\n'
+             '• Almost no false alarms';
+    } else if (sensitivity <= 0.7) {
+      return '• Medium: Detects strong movements (1.5g threshold)\n'
+             '• Good for normal roads with some bumps\n'
+             '• Balanced for most situations';
+    } else {
+      return '• High: Detects significant movements (1.0g threshold)\n'
+             '• Still requires considerable force to trigger\n'
+             '• Best for smooth roads and theft detection';
+    }
   }
   
   void _showCountryPicker() {
@@ -766,6 +798,155 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           });
                         },
                         activeColor: theme.colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Motion Sensitivity Card
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.vibration,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Motion Sensitivity',
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // Current sensitivity display
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Current Level:',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              _getSensitivityLabel(_motionSensitivity),
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 20),
+                      
+                      // Sensitivity slider
+                      Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Low',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              Text(
+                                'Medium',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              Text(
+                                'High',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: _motionSensitivity,
+                            min: AppConstants.minMotionSensitivity,
+                            max: AppConstants.maxMotionSensitivity,
+                            divisions: AppConstants.motionSensitivityDivisions,
+                            label: _getSensitivityLabel(_motionSensitivity),
+                            onChanged: (value) {
+                              setState(() {
+                                _motionSensitivity = value;
+                              });
+                            },
+                          ),
+                          Text(
+                            'Value: ${_motionSensitivity.toStringAsFixed(1)}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
+                      // Sensitivity description
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: theme.colorScheme.secondary.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 16,
+                                  color: theme.colorScheme.secondary,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Sensitivity Levels:',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: theme.colorScheme.onSecondaryContainer,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _getSensitivityDescription(_motionSensitivity),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSecondaryContainer,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
