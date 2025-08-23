@@ -1,0 +1,21 @@
+MCU debug
+10:50:16.894 -> 🚴 Smart Bike Tracker v1.0
+10:50:16.894 -> 
+10:50:16.932 -> 🔄 Normal boot
+10:50:16.932 -> 🔷 BLE Device: BikeTrk_4F8C
+10:50:17.410 -> E (1603) phy_init: store_cal_data_to_nvs_handle: store calibration data failed(0x1105)
+10:50:18.069 -> ✅ BLE Service started
+10:50:18.069 -> 📍 GPS: 14.562940, 121.145820
+10:50:18.139 -> LSM6DSL found at address 0x6B
+10:50:18.511 -> Reference acceleration: X=0.03, Y=0.01, Z=1.02
+10:50:18.522 -> ✅ LSM6DSL ready
+10:50:18.522 -> 📡 SIM7070G: On-demand init
+10:50:18.522 -> 📡 Ready
+10:50:18.522 -> 
+10:50:18.522 -> 
+10:50:18.522 -> 📊 NVS Storage Statistics:
+10:50:18.522 ->   Used entries: 504 / 630 (80%)
+10:50:18.522 ->   Free entries: 126
+10:50:18.522 ->   Namespace count: 8
+10:50:18.522 -> 👤 IR Sensor: User Away
+11:01:30.086 -> 👤 IR Sensor: User Detected
