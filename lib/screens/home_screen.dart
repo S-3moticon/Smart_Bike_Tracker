@@ -55,7 +55,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   LatLng? _selectedMapLocation;
   
   // Clicked GPS history locations that should be shown on map
-  final Set<LatLng> _clickedHistoryLocations = {};
+  final Set<LatLng> _clickedPhoneLocations = {};
+  final Set<LatLng> _clickedMcuLocations = {};
   
   // Tab controller for map/list/mcu view
   late TabController _tabController;
@@ -297,7 +298,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           // Clear MCU history on disconnect
           _mcuGpsHistory = [];
           // Clear clicked history locations on disconnect
-          _clickedHistoryLocations.clear();
+          _clickedPhoneLocations.clear();
+          _clickedMcuLocations.clear();
           // Stop location tracking when disconnected
           _stopLocationTracking();
           _checkBluetoothAndScan();
@@ -1134,13 +1136,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           isTracking: _isTrackingLocation,
                           mcuGpsPoints: _mcuGpsHistory,
                           selectedLocation: _selectedMapLocation,
-                          clickedHistoryLocations: _clickedHistoryLocations,
+                          clickedPhoneLocations: _clickedPhoneLocations,
+                          clickedMcuLocations: _clickedMcuLocations,
                           onLocationSelected: () {
                             // Clear the selected location after navigating
                             setState(() {
                               _selectedMapLocation = null;
                             });
                           },
+                          onClearMarkers: _clearMapMarkers,
                         ),
                         // List View - wrapped in builder to maintain state
                         Builder(
@@ -1494,10 +1498,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     final locationLatLng = LatLng(location.latitude, location.longitude);
     
-    // Add this location to clicked history set
+    // Add this location to clicked phone locations set
     setState(() {
       _selectedMapLocation = locationLatLng;
-      _clickedHistoryLocations.add(locationLatLng);
+      _clickedPhoneLocations.add(locationLatLng);
     });
     
     // Hide any existing snackbar first
@@ -1536,10 +1540,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     final locationLatLng = LatLng(lat, lng);
     
-    // Add this GPS point to clicked history set
+    // Add this GPS point to clicked MCU locations set
     setState(() {
       _selectedMapLocation = locationLatLng;
-      _clickedHistoryLocations.add(locationLatLng);
+      _clickedMcuLocations.add(locationLatLng);
     });
     
     // Format timestamp for display
@@ -1574,6 +1578,60 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
   
+  Future<void> _clearMapMarkers() async {
+    // Check if there are any markers to clear
+    if (_clickedPhoneLocations.isEmpty && _clickedMcuLocations.isEmpty) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No markers to clear'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Map Markers'),
+        content: Text(
+          'Clear ${_clickedPhoneLocations.length + _clickedMcuLocations.length} markers from the map?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      setState(() {
+        _clickedPhoneLocations.clear();
+        _clickedMcuLocations.clear();
+        _selectedMapLocation = null;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Map markers cleared'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    }
+  }
   
   Future<void> _clearLocationHistory() async {
     final confirm = await showDialog<bool>(

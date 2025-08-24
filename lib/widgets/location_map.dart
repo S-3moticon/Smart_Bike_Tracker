@@ -16,8 +16,10 @@ class LocationMap extends StatefulWidget {
   final bool isTracking;
   final List<Map<String, dynamic>>? mcuGpsPoints;
   final LatLng? selectedLocation;
-  final Set<LatLng>? clickedHistoryLocations;
+  final Set<LatLng>? clickedPhoneLocations;
+  final Set<LatLng>? clickedMcuLocations;
   final VoidCallback? onLocationSelected;
+  final VoidCallback? onClearMarkers;
   
   const LocationMap({
     super.key,
@@ -26,8 +28,10 @@ class LocationMap extends StatefulWidget {
     required this.isTracking,
     this.mcuGpsPoints,
     this.selectedLocation,
-    this.clickedHistoryLocations,
+    this.clickedPhoneLocations,
+    this.clickedMcuLocations,
     this.onLocationSelected,
+    this.onClearMarkers,
   });
   
   @override
@@ -262,9 +266,9 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
       );
     }
     
-    // Add clicked history locations as markers (same style as latest GPS)
-    if (widget.clickedHistoryLocations != null) {
-      for (final location in widget.clickedHistoryLocations!) {
+    // Add clicked phone locations as markers with phone icon
+    if (widget.clickedPhoneLocations != null) {
+      for (final location in widget.clickedPhoneLocations!) {
         markers.add(
           Marker(
             point: location,
@@ -273,7 +277,42 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
             child: Stack(
               alignment: Alignment.topCenter,
               children: [
-                // Pin shape with shadow (same as latest GPS marker)
+                // Pin shape with shadow
+                CustomPaint(
+                  size: const Size(36, 44),
+                  painter: _MapPinPainter(
+                    color: Colors.blue,
+                    borderColor: Colors.white,
+                  ),
+                ),
+                // Phone icon inside the pin
+                const Positioned(
+                  top: 8,
+                  child: Icon(
+                    Icons.phone_android,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    
+    // Add clicked MCU locations as markers with satellite icon
+    if (widget.clickedMcuLocations != null) {
+      for (final location in widget.clickedMcuLocations!) {
+        markers.add(
+          Marker(
+            point: location,
+            width: 36,
+            height: 44,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                // Pin shape with shadow
                 CustomPaint(
                   size: const Size(36, 44),
                   painter: _MapPinPainter(
@@ -281,7 +320,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                     borderColor: Colors.white,
                   ),
                 ),
-                // Icon inside the pin
+                // Satellite icon inside the pin
                 const Positioned(
                   top: 8,
                   child: Icon(
@@ -485,6 +524,51 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 ),
               ),
               const SizedBox(height: 8),
+              // Clear markers button
+              if ((widget.clickedPhoneLocations?.isNotEmpty ?? false) || 
+                  (widget.clickedMcuLocations?.isNotEmpty ?? false)) ...[
+                FloatingActionButton(
+                  mini: true,
+                  onPressed: widget.onClearMarkers,
+                  backgroundColor: theme.colorScheme.errorContainer,
+                  tooltip: 'Clear all markers',
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Icon(
+                        Icons.clear_all,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                      // Badge showing marker count
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.error,
+                            shape: BoxShape.circle,
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 14,
+                            minHeight: 14,
+                          ),
+                          child: Text(
+                            '${(widget.clickedPhoneLocations?.length ?? 0) + (widget.clickedMcuLocations?.length ?? 0)}',
+                            style: TextStyle(
+                              color: theme.colorScheme.onError,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               // Zoom in
               FloatingActionButton(
                 mini: true,
