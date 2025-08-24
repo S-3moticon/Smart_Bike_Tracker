@@ -1511,6 +1511,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       SnackBar(
         content: Text('Showing location from ${location.formattedDate} ${location.formattedTimestamp}'),
         duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.down,
         action: SnackBarAction(
           label: 'Copy',
           onPressed: () {
@@ -1521,6 +1523,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               SnackBar(
                 content: Text('Copied: $coordinates'),
                 duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
               ),
             );
           },
@@ -1560,6 +1563,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       SnackBar(
         content: Text('Showing GPS point from $formattedDate $formattedTime'),
         duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.down,
         action: SnackBarAction(
           label: 'Copy',
           onPressed: () {
@@ -1570,6 +1575,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               SnackBar(
                 content: Text('Copied: $coordinates'),
                 duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
               ),
             );
           },
