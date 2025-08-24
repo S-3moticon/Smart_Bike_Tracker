@@ -7,6 +7,7 @@ class UIHelpers {
   static void showSuccess(BuildContext context, String message) {
     if (!context.mounted) return;
     
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -20,6 +21,7 @@ class UIHelpers {
   static void showError(BuildContext context, String message) {
     if (!context.mounted) return;
     
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -33,6 +35,7 @@ class UIHelpers {
   static void showWarning(BuildContext context, String message) {
     if (!context.mounted) return;
     
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -46,6 +49,7 @@ class UIHelpers {
   static void showInfo(BuildContext context, String message) {
     if (!context.mounted) return;
     
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),

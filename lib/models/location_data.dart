@@ -1,12 +1,18 @@
+import 'package:latlong2/latlong.dart';
+
 class LocationData {
   final double latitude;
   final double longitude;
+  final double accuracy;
   final DateTime timestamp;
+  final String source;
   
   LocationData({
     required this.latitude,
     required this.longitude,
+    this.accuracy = 10.0,
     required this.timestamp,
+    this.source = 'phone',
   });
   
   String get formattedTimestamp {
@@ -26,6 +32,9 @@ class LocationData {
   String get formattedCoordinates {
     return '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
   }
+  
+  // Helper method to convert to LatLng
+  LatLng toLatLng() => LatLng(latitude, longitude);
   
   @override
   String toString() {

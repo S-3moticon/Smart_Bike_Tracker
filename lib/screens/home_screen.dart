@@ -55,7 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   LatLng? _selectedMapLocation;
   
   // Clicked GPS history locations that should be shown on map
-  Set<LatLng> _clickedHistoryLocations = {};
+  final Set<LatLng> _clickedHistoryLocations = {};
   
   // Tab controller for map/list/mcu view
   late TabController _tabController;
@@ -235,6 +235,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           if (cleared) {
             developer.log('MCU GPS history cleared successfully', name: 'HomeScreen');
             if (mounted) {
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('GPS history synced (${history.length} points) and MCU memory cleared'),
@@ -246,6 +247,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           } else {
             developer.log('Failed to clear MCU GPS history', name: 'HomeScreen');
             if (mounted) {
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('GPS history synced but failed to clear MCU memory'),
@@ -1498,6 +1500,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _clickedHistoryLocations.add(locationLatLng);
     });
     
+    // Hide any existing snackbar first
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     // Show a snackbar with location details
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1508,6 +1512,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           onPressed: () {
             final coordinates = '${location.latitude}, ${location.longitude}';
             Clipboard.setData(ClipboardData(text: coordinates));
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Copied: $coordinates'),
@@ -1544,6 +1549,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final formattedDate = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
     final formattedTime = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
     
+    // Hide any existing snackbar first
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     // Show a snackbar with GPS point details
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1554,6 +1561,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           onPressed: () {
             final coordinates = '$lat, $lng';
             Clipboard.setData(ClipboardData(text: coordinates));
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Copied: $coordinates'),
@@ -1566,17 +1574,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
   
-  void _copyLocationToClipboard(LocationData location) {
-    final coordinates = '${location.latitude}, ${location.longitude}';
-    Clipboard.setData(ClipboardData(text: coordinates));
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Copied: $coordinates'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
   
   Future<void> _clearLocationHistory() async {
     final confirm = await showDialog<bool>(
@@ -1607,6 +1604,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
       
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Location history cleared')),
         );

@@ -9,7 +9,6 @@ import 'package:geolocator/geolocator.dart';
 import '../models/bike_device.dart';
 import '../constants/ble_protocol.dart';
 import '../constants/app_constants.dart';
-import '../utils/permission_helper.dart';
 
 class BikeBluetoothService {
   static final BikeBluetoothService _instance = BikeBluetoothService._internal();
@@ -519,10 +518,9 @@ class BikeBluetoothService {
       
       // Set up completer to wait for notification response
       final completer = Completer<Map<String, dynamic>?>();
-      StreamSubscription? subscription;
       
       // Listen for the notification response
-      subscription = historyChar.lastValueStream.listen((value) {
+      final subscription = historyChar.lastValueStream.listen((value) {
         try {
           if (value.isEmpty) {
             developer.log('Received empty notification', name: 'BLE-GPSPage');
@@ -561,11 +559,11 @@ class BikeBluetoothService {
           },
         );
         
-        subscription?.cancel();
+        subscription.cancel();
         return pageData;
       } catch (e) {
         developer.log('Error getting page data: $e', name: 'BLE-GPSPage');
-        subscription?.cancel();
+        subscription.cancel();
         return null;
       }
     } catch (e) {
@@ -605,7 +603,7 @@ class BikeBluetoothService {
           for (var item in historyList) {
             if (item is Map<String, dynamic>) {
               // Debug: log the actual GPS values
-              if (page == 0 && allPoints.length == 0) {
+              if (page == 0 && allPoints.isEmpty) {
                 developer.log('First GPS point from page 0: lat=${item['lat']}, lon=${item['lon']}', 
                              name: 'BLE-GPSHistory');
               }

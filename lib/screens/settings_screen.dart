@@ -797,7 +797,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _alertsEnabled = value;
                           });
                         },
-                        activeColor: theme.colorScheme.primary,
+                        activeThumbColor: theme.colorScheme.primary,
                       ),
                     ],
                   ),
