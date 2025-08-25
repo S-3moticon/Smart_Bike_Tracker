@@ -49,6 +49,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   double _zoom = 15.0;
   bool _useOfflineMode = false;
   Map<String, dynamic>? _offlineMapInfo;
+  bool _showTrail = true; // Toggle for showing location trail
   
   int _selectedTileLayer = 0;
   static const List<Map<String, String>> _tileLayers = [
@@ -382,9 +383,27 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   }
   
   List<LatLng> _buildPolylinePoints() {
-    // Don't show polyline trails anymore since we're only showing latest markers
-    // and clicked history points
-    return [];
+    // Build trail from location history
+    final points = <LatLng>[];
+    
+    // Add all historical points to create a continuous trail
+    for (final location in widget.locationHistory.reversed) {
+      points.add(LatLng(location.latitude, location.longitude));
+    }
+    
+    // Add current location if available and tracking
+    if (widget.currentLocation != null && widget.isTracking) {
+      final currentPoint = LatLng(
+        widget.currentLocation!.latitude,
+        widget.currentLocation!.longitude,
+      );
+      // Only add if it's different from the last point
+      if (points.isEmpty || points.last != currentPoint) {
+        points.add(currentPoint);
+      }
+    }
+    
+    return points;
   }
   
   @override
@@ -452,17 +471,19 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
             ),
             
             // Polyline layer for location trail
-            if (widget.locationHistory.isNotEmpty)
+            if (_showTrail && widget.locationHistory.isNotEmpty)
               PolylineLayer(
                 polylines: [
                   Polyline(
                     points: _buildPolylinePoints(),
-                    color: theme.colorScheme.primary.withValues(alpha: 0.6),
-                    strokeWidth: 4,
+                    color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                    strokeWidth: 3.5,
                     gradientColors: [
                       theme.colorScheme.primary,
-                      theme.colorScheme.primary.withValues(alpha: 0.3),
+                      theme.colorScheme.primary.withValues(alpha: 0.4),
                     ],
+                    borderColor: theme.colorScheme.primary.withValues(alpha: 0.9),
+                    borderStrokeWidth: 0.5,
                   ),
                 ],
               ),
@@ -524,6 +545,35 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 ),
               ),
               const SizedBox(height: 8),
+              // Toggle trail button
+              if (widget.locationHistory.isNotEmpty) ...[
+                FloatingActionButton(
+                  mini: true,
+                  onPressed: () {
+                    setState(() {
+                      _showTrail = !_showTrail;
+                    });
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(_showTrail ? 'Trail enabled' : 'Trail hidden'),
+                        duration: const Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                  backgroundColor: _showTrail 
+                    ? theme.colorScheme.primaryContainer 
+                    : theme.colorScheme.surface,
+                  tooltip: _showTrail ? 'Hide trail' : 'Show trail',
+                  child: Icon(
+                    Icons.route,
+                    color: _showTrail 
+                      ? theme.colorScheme.onPrimaryContainer 
+                      : theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               // Clear markers button
               if ((widget.clickedPhoneLocations?.isNotEmpty ?? false) || 
                   (widget.clickedMcuLocations?.isNotEmpty ?? false)) ...[
@@ -635,6 +685,45 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onPrimary,
                       fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        
+        // Trail info indicator
+        if (_showTrail && widget.locationHistory.isNotEmpty)
+          Positioned(
+            bottom: 100,
+            left: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.timeline,
+                    size: 14,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Trail: ${widget.locationHistory.length} points',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],

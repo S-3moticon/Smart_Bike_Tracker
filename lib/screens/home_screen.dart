@@ -1070,14 +1070,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   onPressed: _clearLocationHistory,
                                   tooltip: 'Clear Phone History',
                                 ),
-                              // Show refresh button when in GPS view
-                              if (_tabController.index == 2 && _bleService.isConnected)
-                                IconButton(
-                                  icon: const Icon(Icons.refresh),
-                                  color: theme.colorScheme.primary,
-                                  onPressed: _fetchMcuGpsHistory,
-                                  tooltip: 'Refresh MCU History',
-                                ),
+                              // Show clear and refresh buttons when in GPS view
+                              if (_tabController.index == 2) ...[
+                                if (_mcuGpsHistory.isNotEmpty)
+                                  IconButton(
+                                    icon: const Icon(Icons.clear_all),
+                                    color: theme.colorScheme.error,
+                                    onPressed: _clearMcuGpsHistory,
+                                    tooltip: 'Clear GPS History',
+                                  ),
+                                if (_bleService.isConnected)
+                                  IconButton(
+                                    icon: const Icon(Icons.refresh),
+                                    color: theme.colorScheme.primary,
+                                    onPressed: _fetchMcuGpsHistory,
+                                    tooltip: 'Refresh MCU History',
+                                  ),
+                              ],
                               // Show download button when in map view
                               if (_tabController.index == 0 && _locationHistory.isNotEmpty)
                                 IconButton(
@@ -1085,17 +1094,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   onPressed: () => _showMapDownloadDialog(),
                                   tooltip: 'Download Map',
                                 ),
-                              if (_locationHistory.isNotEmpty)
+                              // Show count badge based on current tab
+                              if ((_tabController.index == 1 && _locationHistory.isNotEmpty) ||
+                                  (_tabController.index == 2 && _mcuGpsHistory.isNotEmpty))
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: theme.colorScheme.primaryContainer,
+                                    color: _tabController.index == 1 
+                                      ? theme.colorScheme.primaryContainer
+                                      : theme.colorScheme.secondaryContainer,
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Text(
-                                    '${_locationHistory.length} logs',
+                                    _tabController.index == 1
+                                      ? '${_locationHistory.length} logs'
+                                      : '${_mcuGpsHistory.length} points',
                                     style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onPrimaryContainer,
+                                      color: _tabController.index == 1
+                                        ? theme.colorScheme.onPrimaryContainer
+                                        : theme.colorScheme.onSecondaryContainer,
                                     ),
                                   ),
                                 ),
@@ -1671,6 +1688,69 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Location history cleared')),
+        );
+      }
+    }
+  }
+  
+  Future<void> _clearMcuGpsHistory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear GPS History'),
+        content: const Text('This will permanently delete all saved GPS history from the tracker. Continue?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      // Clear local backup first
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('mcu_gps_history_backup');
+        await prefs.remove('mcu_gps_history_backup_date');
+        developer.log('Cleared local GPS history backup', name: 'HomeScreen');
+      } catch (e) {
+        developer.log('Error clearing local GPS backup: $e', name: 'HomeScreen', error: e);
+      }
+      
+      // Clear the displayed history
+      setState(() {
+        _mcuGpsHistory.clear();
+        // Also clear any clicked MCU locations from the map
+        _clickedMcuLocations.clear();
+      });
+      
+      // If connected, also try to clear MCU's internal GPS history
+      if (_bleService.isConnected) {
+        try {
+          final cleared = await _bleService.clearMCUGPSHistory();
+          if (cleared) {
+            developer.log('MCU GPS history cleared successfully', name: 'HomeScreen');
+          } else {
+            developer.log('Failed to clear MCU GPS history', name: 'HomeScreen');
+          }
+        } catch (e) {
+          developer.log('Error clearing MCU GPS history: $e', name: 'HomeScreen', error: e);
+        }
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('GPS history cleared')),
         );
       }
     }
