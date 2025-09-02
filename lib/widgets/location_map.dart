@@ -411,6 +411,30 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
       }
     }
     
+    // Add trail point markers (small circles every 5th GPS point)
+    if (_showTrail && widget.locationHistory.isNotEmpty) {
+      for (int i = 0; i < widget.locationHistory.length; i += 5) {
+        final location = widget.locationHistory[i];
+        markers.add(
+          Marker(
+            point: LatLng(location.latitude, location.longitude),
+            width: 8,
+            height: 8,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  width: 1,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    
     return markers;
   }
   
