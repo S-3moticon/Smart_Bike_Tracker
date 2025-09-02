@@ -1107,23 +1107,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   onPressed: _clearLocationHistory,
                                   tooltip: 'Clear Phone History',
                                 ),
-                              // Show clear and refresh buttons when in GPS view
-                              if (_tabController.index == 2) ...[
-                                if (_mcuGpsHistory.isNotEmpty)
-                                  IconButton(
-                                    icon: const Icon(Icons.clear_all),
-                                    color: theme.colorScheme.error,
-                                    onPressed: _clearMcuGpsHistory,
-                                    tooltip: 'Clear GPS History',
-                                  ),
-                                if (_bleService.isConnected)
-                                  IconButton(
-                                    icon: const Icon(Icons.refresh),
-                                    color: theme.colorScheme.primary,
-                                    onPressed: _fetchMcuGpsHistory,
-                                    tooltip: 'Refresh MCU History',
-                                  ),
-                              ],
+                              // Show clear button when in GPS view
+                              if (_tabController.index == 2 && _mcuGpsHistory.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.clear_all),
+                                  color: theme.colorScheme.error,
+                                  onPressed: _clearMcuGpsHistory,
+                                  tooltip: 'Clear GPS History',
+                                ),
                               // Show download button when in map view
                               if (_tabController.index == 0 && _locationHistory.isNotEmpty)
                                 IconButton(

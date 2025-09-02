@@ -15,8 +15,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  cupertino_icons: ^1.0.8
   
   # BLE Communication
   flutter_blue_plus: ^1.32.12
