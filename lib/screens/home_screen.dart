@@ -384,6 +384,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     developer.log('Location tracking stopped', name: 'HomeScreen');
   }
   
+  Future<void> _toggleLocationTracking() async {
+    if (_isTrackingLocation) {
+      await _stopLocationTracking();
+    } else {
+      await _startLocationTracking();
+    }
+  }
+  
   Future<void> _initializeAndAutoConnect() async {
     // Load saved device info
     _savedDevice = await _bleService.getLastConnectedDevice();
@@ -1057,11 +1065,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 color: _isTrackingLocation ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
                               ),
                               const SizedBox(width: 12),
-                              Text(
-                                _isTrackingLocation ? 'Location Tracking Active' : 'Location Tracking Inactive',
-                                style: theme.textTheme.titleMedium,
+                              Expanded(
+                                child: Text(
+                                  _isTrackingLocation ? 'Location Tracking Active' : 'Location Tracking Inactive',
+                                  style: theme.textTheme.titleMedium,
+                                ),
                               ),
-                              const Spacer(),
+                              // Manual toggle button for location tracking
+                              IconButton(
+                                icon: Icon(
+                                  _isTrackingLocation ? Icons.pause : Icons.play_arrow,
+                                  color: _isTrackingLocation 
+                                    ? theme.colorScheme.error 
+                                    : theme.colorScheme.primary,
+                                ),
+                                onPressed: _toggleLocationTracking,
+                                tooltip: _isTrackingLocation ? 'Stop Tracking' : 'Start Tracking',
+                              ),
                               // Show clear button when in Phone list view
                               if (_tabController.index == 1 && _locationHistory.isNotEmpty)
                                 IconButton(

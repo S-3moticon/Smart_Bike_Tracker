@@ -50,6 +50,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   bool _useOfflineMode = false;
   Map<String, dynamic>? _offlineMapInfo;
   bool _showTrail = true; // Toggle for showing location trail
+  bool _autoFollowLocation = true; // Auto-center map on location updates
   
   int _selectedTileLayer = 0;
   static const List<Map<String, String>> _tileLayers = [
@@ -158,6 +159,12 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
         widget.currentLocation!.longitude,
       );
       _mapController.move(newCenter, 16.0);
+      setState(() {
+        _center = newCenter;
+        _zoom = 16.0;
+        _autoFollowLocation = true; // Re-enable auto-follow when centering
+      });
+      developer.log('Centered on current location, auto-follow enabled', name: 'LocationMap');
     }
   }
   
@@ -205,16 +212,41 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
       _hasInitiallyMoved = true;
       developer.log('Auto-centered map on first location', name: 'LocationMap');
     }
-    // Auto-center on new location if tracking
+    // Auto-center on new location if tracking and auto-follow is enabled
     else if (widget.isTracking && 
+        _autoFollowLocation &&
         widget.currentLocation != null &&
         oldWidget.currentLocation != widget.currentLocation) {
+      _center = LatLng(
+        widget.currentLocation!.latitude,
+        widget.currentLocation!.longitude,
+      );
+      // Actually move the map to the new location
+      _mapController.move(_center, _zoom);
+      developer.log('Auto-centered map to new location', name: 'LocationMap');
+    }
+    
+    // Force rebuild when location history changes (for live trail updates)
+    if (widget.locationHistory.length != oldWidget.locationHistory.length) {
+      developer.log('Location history updated, refreshing trail. Points: ${widget.locationHistory.length}', 
+                   name: 'LocationMap');
+      // Force a rebuild to update the trail
       setState(() {
-        _center = LatLng(
-          widget.currentLocation!.latitude,
-          widget.currentLocation!.longitude,
-        );
+        // State change triggers rebuild which will call _buildPolylinePoints()
       });
+    } else if (widget.locationHistory.isNotEmpty && oldWidget.locationHistory.isNotEmpty) {
+      // Check if the latest location has changed (new GPS point added)
+      final latestLocation = widget.locationHistory.first;
+      final oldLatestLocation = oldWidget.locationHistory.first;
+      
+      if (latestLocation.latitude != oldLatestLocation.latitude ||
+          latestLocation.longitude != oldLatestLocation.longitude ||
+          latestLocation.timestamp != oldLatestLocation.timestamp) {
+        developer.log('New GPS point detected, updating trail', name: 'LocationMap');
+        setState(() {
+          // Trigger rebuild to update the polyline
+        });
+      }
     }
   }
   
@@ -386,13 +418,18 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
     // Build trail from location history
     final points = <LatLng>[];
     
-    // Add all historical points to create a continuous trail
+    // Since locationHistory is already sorted with newest first (index 0),
+    // we need to reverse it to draw the trail chronologically
     for (final location in widget.locationHistory.reversed) {
-      points.add(LatLng(location.latitude, location.longitude));
+      final point = LatLng(location.latitude, location.longitude);
+      // Avoid duplicate consecutive points
+      if (points.isEmpty || points.last != point) {
+        points.add(point);
+      }
     }
     
-    // Add current location if available and tracking
-    if (widget.currentLocation != null && widget.isTracking) {
+    // Add current location if available and different from last point
+    if (widget.currentLocation != null) {
       final currentPoint = LatLng(
         widget.currentLocation!.latitude,
         widget.currentLocation!.longitude,
@@ -403,6 +440,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
       }
     }
     
+    developer.log('Trail points: ${points.length}', name: 'LocationMap');
     return points;
   }
   
@@ -423,6 +461,13 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
             maxZoom: 18,
             onPositionChanged: (position, hasGesture) {
               if (hasGesture && position.center != null && position.zoom != null) {
+                // User manually moved the map, disable auto-follow
+                if (_autoFollowLocation) {
+                  setState(() {
+                    _autoFollowLocation = false;
+                    developer.log('Auto-follow disabled due to manual pan', name: 'LocationMap');
+                  });
+                }
                 setState(() {
                   _center = position.center!;
                   _zoom = position.zoom!;
@@ -531,16 +576,22 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                 ),
                 const SizedBox(height: 8),
               ],
-              // Center on location button
+              // Center on location button (shows auto-follow state)
               FloatingActionButton(
                 mini: true,
                 onPressed: widget.currentLocation != null ? _centerOnCurrentLocation : null,
-                backgroundColor: theme.colorScheme.surface,
-                tooltip: 'Center on location',
+                backgroundColor: _autoFollowLocation && widget.currentLocation != null
+                  ? theme.colorScheme.primaryContainer
+                  : theme.colorScheme.surface,
+                tooltip: _autoFollowLocation 
+                  ? 'Auto-follow active' 
+                  : 'Center on location',
                 child: Icon(
-                  Icons.my_location,
+                  _autoFollowLocation ? Icons.my_location : Icons.location_searching,
                   color: widget.currentLocation != null 
-                    ? theme.colorScheme.primary 
+                    ? (_autoFollowLocation 
+                      ? theme.colorScheme.onPrimaryContainer 
+                      : theme.colorScheme.primary)
                     : theme.colorScheme.onSurfaceVariant,
                 ),
               ),

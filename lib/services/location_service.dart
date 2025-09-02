@@ -12,6 +12,9 @@ class LocationService {
   final _locationController = StreamController<LocationData>.broadcast();
   Position? _lastKnownPosition;
   DateTime? _lastPositionTime;
+  Timer? _retryTimer;
+  int _retryCount = 0;
+  static const int _maxRetries = 5;
   
   Stream<LocationData> get locationStream => _locationController.stream;
   
@@ -85,12 +88,16 @@ class LocationService {
       const LocationSettings locationSettings = LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation, // Better for quick fix
         distanceFilter: 5, // More frequent updates (5 meters)
-        timeLimit: Duration(seconds: 10), // Timeout for each update
+        // Removed timeLimit to allow Samsung devices more time to get GPS fix
       );
       
       _positionSubscription = Geolocator.getPositionStream(
         locationSettings: locationSettings,
       ).listen((Position position) {
+        // Reset retry count on successful location
+        _retryCount = 0;
+        _retryTimer?.cancel();
+        
         _lastKnownPosition = position;
         _lastPositionTime = position.timestamp;
         
@@ -114,14 +121,46 @@ class LocationService {
           );
           _locationController.add(locationData);
         }
+        
+        // Auto-retry on timeout or other errors
+        _handleLocationError(error);
       });
     } catch (e) {
       developer.log('Error starting location tracking: $e', name: 'Location', error: e);
     }
   }
   
+  void _handleLocationError(dynamic error) {
+    // Cancel any existing retry timer
+    _retryTimer?.cancel();
+    
+    // Check if we should retry
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+      final retryDelay = Duration(seconds: 2 * _retryCount); // Exponential backoff
+      
+      developer.log('Location error occurred, retrying in ${retryDelay.inSeconds}s (attempt $_retryCount/$_maxRetries)', 
+                   name: 'Location');
+      
+      _retryTimer = Timer(retryDelay, () async {
+        developer.log('Restarting location tracking after error...', name: 'Location');
+        // Cancel existing subscription
+        await _positionSubscription?.cancel();
+        _positionSubscription = null;
+        
+        // Restart tracking
+        await startLocationTracking();
+      });
+    } else {
+      developer.log('Max retries reached, stopping location tracking', name: 'Location');
+      _retryCount = 0; // Reset for next time
+    }
+  }
+  
   Future<void> stopLocationTracking() async {
     developer.log('Stopping location tracking', name: 'Location');
+    _retryTimer?.cancel();
+    _retryCount = 0;
     await _positionSubscription?.cancel();
     _positionSubscription = null;
   }
@@ -261,6 +300,7 @@ class LocationService {
   }
   
   void dispose() {
+    _retryTimer?.cancel();
     _positionSubscription?.cancel();
     _locationController.close();
   }
