@@ -52,7 +52,7 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
   bool _showTrail = true; // Toggle for showing location trail
   bool _autoFollowLocation = true; // Auto-center map on location updates
   
-  int _selectedTileLayer = 0;
+  int _selectedTileLayer = 4; // Default to Esri World Imagery
   static const List<Map<String, String>> _tileLayers = [
     {
       'name': 'OpenStreetMap',
