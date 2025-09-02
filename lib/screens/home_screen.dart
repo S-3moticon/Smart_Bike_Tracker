@@ -1413,7 +1413,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   final timestamp = point['time'] ?? point['timestamp'] ?? 0;
                                   // MCU sends timestamp in milliseconds already
                                   final date = timestamp > 0 
-                                    ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+                                    ? DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal() // Convert to local time
                                     : DateTime.now();
                                   
                                   return Card(
@@ -1596,7 +1596,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     // Format timestamp for display
     final date = timestamp > 0 
-      ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+      ? DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal() // Convert to local time
       : DateTime.now();
     final formattedDate = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
     final formattedTime = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';

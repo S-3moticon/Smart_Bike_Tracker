@@ -16,16 +16,18 @@ class LocationData {
   });
   
   String get formattedTimestamp {
-    final hour = timestamp.hour.toString().padLeft(2, '0');
-    final minute = timestamp.minute.toString().padLeft(2, '0');
-    final second = timestamp.second.toString().padLeft(2, '0');
+    final localTime = timestamp.toLocal(); // Convert UTC to local time
+    final hour = localTime.hour.toString().padLeft(2, '0');
+    final minute = localTime.minute.toString().padLeft(2, '0');
+    final second = localTime.second.toString().padLeft(2, '0');
     return '$hour:$minute:$second';
   }
   
   String get formattedDate {
-    final day = timestamp.day.toString().padLeft(2, '0');
-    final month = timestamp.month.toString().padLeft(2, '0');
-    final year = timestamp.year;
+    final localTime = timestamp.toLocal(); // Convert UTC to local time
+    final day = localTime.day.toString().padLeft(2, '0');
+    final month = localTime.month.toString().padLeft(2, '0');
+    final year = localTime.year;
     return '$day/$month/$year';
   }
   
