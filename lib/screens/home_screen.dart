@@ -384,11 +384,30 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     developer.log('Location tracking stopped', name: 'HomeScreen');
   }
   
-  Future<void> _toggleLocationTracking() async {
-    if (_isTrackingLocation) {
-      await _stopLocationTracking();
-    } else {
-      await _startLocationTracking();
+  Future<void> _refreshLocation() async {
+    developer.log('Manually refreshing GPS location', name: 'HomeScreen');
+    
+    // Show loading indicator
+    if (mounted) {
+      UIHelpers.showInfo(context, 'Getting GPS location...');
+    }
+    
+    // Get current location immediately
+    final location = await _locationService.getCurrentLocation();
+    
+    if (location != null && mounted) {
+      setState(() {
+        _currentLocation = location;
+        _locationHistory.insert(0, location);
+      });
+      
+      // Save to storage
+      await _storageService.saveLocationHistory(_locationHistory);
+      
+      UIHelpers.showInfo(context, 'Location refreshed');
+      developer.log('Location refreshed: ${location.formattedCoordinates}', name: 'HomeScreen');
+    } else if (mounted) {
+      UIHelpers.showError(context, 'Could not get GPS location');
     }
   }
   
@@ -1071,16 +1090,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   style: theme.textTheme.titleMedium,
                                 ),
                               ),
-                              // Manual toggle button for location tracking
+                              // Refresh location button
                               IconButton(
                                 icon: Icon(
-                                  _isTrackingLocation ? Icons.pause : Icons.play_arrow,
-                                  color: _isTrackingLocation 
-                                    ? theme.colorScheme.error 
-                                    : theme.colorScheme.primary,
+                                  Icons.refresh,
+                                  color: theme.colorScheme.primary,
                                 ),
-                                onPressed: _toggleLocationTracking,
-                                tooltip: _isTrackingLocation ? 'Stop Tracking' : 'Start Tracking',
+                                onPressed: _refreshLocation,
+                                tooltip: 'Refresh GPS Location',
                               ),
                               // Show clear button when in Phone list view
                               if (_tabController.index == 1 && _locationHistory.isNotEmpty)
