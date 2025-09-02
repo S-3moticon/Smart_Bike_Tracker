@@ -189,6 +189,156 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
     );
   }
   
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+  
+  void _handleMenuSelection(String value) {
+    switch (value) {
+      case 'switch_layer':
+        _switchTileLayer();
+        break;
+      case 'toggle_offline':
+        _toggleOfflineMode();
+        break;
+      case 'center_location':
+        _centerOnCurrentLocation();
+        break;
+      case 'toggle_trail':
+        setState(() {
+          _showTrail = !_showTrail;
+        });
+        _showSnackBar(_showTrail ? 'Trail enabled' : 'Trail hidden');
+        break;
+      case 'clear_markers':
+        widget.onClearMarkers?.call();
+        break;
+    }
+  }
+  
+  List<PopupMenuEntry<String>> _buildMenuItems(ThemeData theme) {
+    final hasMarkers = (widget.clickedPhoneLocations?.isNotEmpty ?? false) || 
+                       (widget.clickedMcuLocations?.isNotEmpty ?? false);
+    final markerCount = (widget.clickedPhoneLocations?.length ?? 0) + 
+                        (widget.clickedMcuLocations?.length ?? 0);
+    
+    return [
+      // Map Style
+      PopupMenuItem<String>(
+        value: 'switch_layer',
+        child: ListTile(
+          leading: Icon(
+            Icons.layers,
+            color: theme.colorScheme.primary,
+          ),
+          title: const Text('Map Style'),
+          subtitle: Text(
+            _tileLayers[_selectedTileLayer]['name']!,
+            style: theme.textTheme.bodySmall,
+          ),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      
+      // Offline Mode (conditional)
+      if (_offlineMapInfo?['exists'] ?? false)
+        PopupMenuItem<String>(
+          value: 'toggle_offline',
+          child: ListTile(
+            leading: Icon(
+              _useOfflineMode ? Icons.offline_pin : Icons.cloud_outlined,
+              color: _useOfflineMode 
+                ? theme.colorScheme.primary 
+                : theme.colorScheme.onSurfaceVariant,
+            ),
+            title: Text(_useOfflineMode ? 'Offline Mode' : 'Online Mode'),
+            subtitle: Text(
+              _useOfflineMode ? 'Using local maps' : 'Using internet',
+              style: theme.textTheme.bodySmall,
+            ),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      
+      const PopupMenuDivider(),
+      
+      // Center Location
+      PopupMenuItem<String>(
+        value: 'center_location',
+        enabled: widget.currentLocation != null,
+        child: ListTile(
+          leading: Icon(
+            _autoFollowLocation ? Icons.my_location : Icons.location_searching,
+            color: widget.currentLocation != null
+              ? (_autoFollowLocation 
+                ? theme.colorScheme.primary 
+                : theme.colorScheme.onSurfaceVariant)
+              : theme.colorScheme.onSurface.withValues(alpha: 0.38),
+          ),
+          title: const Text('Center on Location'),
+          subtitle: Text(
+            _autoFollowLocation ? 'Auto-follow active' : 'Tap to enable',
+            style: theme.textTheme.bodySmall,
+          ),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      
+      // Toggle Trail
+      if (widget.locationHistory.isNotEmpty)
+        PopupMenuItem<String>(
+          value: 'toggle_trail',
+          child: ListTile(
+            leading: Icon(
+              Icons.route,
+              color: _showTrail 
+                ? theme.colorScheme.primary 
+                : theme.colorScheme.onSurfaceVariant,
+            ),
+            title: Text(_showTrail ? 'Hide Trail' : 'Show Trail'),
+            subtitle: Text(
+              '${widget.locationHistory.length} points',
+              style: theme.textTheme.bodySmall,
+            ),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      
+      // Clear Markers
+      if (hasMarkers) ...[
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'clear_markers',
+          child: ListTile(
+            leading: Icon(
+              Icons.clear_all,
+              color: theme.colorScheme.error,
+            ),
+            title: const Text('Clear Markers'),
+            subtitle: Text(
+              '$markerCount marker${markerCount > 1 ? 's' : ''}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    ];
+  }
+  
   @override
   void didUpdateWidget(LocationMap oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -564,164 +714,35 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
           ],
         ),
         
-        // Map controls
+        // Map controls dropdown menu
         Positioned(
           top: 16,
           right: 16,
-          child: Column(
-            children: [
-              // Switch tile layer button
-              FloatingActionButton(
-                mini: true,
-                onPressed: _switchTileLayer,
-                backgroundColor: theme.colorScheme.surface,
-                tooltip: 'Switch map style',
-                child: Icon(
-                  Icons.layers,
-                  color: theme.colorScheme.primary,
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
                 ),
-              ),
-              const SizedBox(height: 8),
-              // Offline mode toggle (only show if offline maps exist)
-              if (_offlineMapInfo?['exists'] ?? false) ...[              
-                FloatingActionButton(
-                  mini: true,
-                  onPressed: _toggleOfflineMode,
-                  backgroundColor: _useOfflineMode 
-                    ? theme.colorScheme.primaryContainer 
-                    : theme.colorScheme.surface,
-                  tooltip: _useOfflineMode ? 'Using offline maps' : 'Using online maps',
-                  child: Icon(
-                    _useOfflineMode ? Icons.offline_pin : Icons.cloud_outlined,
-                    color: _useOfflineMode 
-                      ? theme.colorScheme.onPrimaryContainer 
-                      : theme.colorScheme.primary,
-                  ),
-                ),
-                const SizedBox(height: 8),
               ],
-              // Center on location button (shows auto-follow state)
-              FloatingActionButton(
-                mini: true,
-                onPressed: widget.currentLocation != null ? _centerOnCurrentLocation : null,
-                backgroundColor: _autoFollowLocation && widget.currentLocation != null
-                  ? theme.colorScheme.primaryContainer
-                  : theme.colorScheme.surface,
-                tooltip: _autoFollowLocation 
-                  ? 'Auto-follow active' 
-                  : 'Center on location',
-                child: Icon(
-                  _autoFollowLocation ? Icons.my_location : Icons.location_searching,
-                  color: widget.currentLocation != null 
-                    ? (_autoFollowLocation 
-                      ? theme.colorScheme.onPrimaryContainer 
-                      : theme.colorScheme.primary)
-                    : theme.colorScheme.onSurfaceVariant,
-                ),
+            ),
+            child: PopupMenuButton<String>(
+              icon: Icon(
+                Icons.menu,
+                color: theme.colorScheme.primary,
               ),
-              const SizedBox(height: 8),
-              // Toggle trail button
-              if (widget.locationHistory.isNotEmpty) ...[
-                FloatingActionButton(
-                  mini: true,
-                  onPressed: () {
-                    setState(() {
-                      _showTrail = !_showTrail;
-                    });
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(_showTrail ? 'Trail enabled' : 'Trail hidden'),
-                        duration: const Duration(seconds: 1),
-                      ),
-                    );
-                  },
-                  backgroundColor: _showTrail 
-                    ? theme.colorScheme.primaryContainer 
-                    : theme.colorScheme.surface,
-                  tooltip: _showTrail ? 'Hide trail' : 'Show trail',
-                  child: Icon(
-                    Icons.route,
-                    color: _showTrail 
-                      ? theme.colorScheme.onPrimaryContainer 
-                      : theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-              // Clear markers button
-              if ((widget.clickedPhoneLocations?.isNotEmpty ?? false) || 
-                  (widget.clickedMcuLocations?.isNotEmpty ?? false)) ...[
-                FloatingActionButton(
-                  mini: true,
-                  onPressed: widget.onClearMarkers,
-                  backgroundColor: theme.colorScheme.errorContainer,
-                  tooltip: 'Clear all markers',
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Icon(
-                        Icons.clear_all,
-                        color: theme.colorScheme.onErrorContainer,
-                      ),
-                      // Badge showing marker count
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.error,
-                            shape: BoxShape.circle,
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 14,
-                            minHeight: 14,
-                          ),
-                          child: Text(
-                            '${(widget.clickedPhoneLocations?.length ?? 0) + (widget.clickedMcuLocations?.length ?? 0)}',
-                            style: TextStyle(
-                              color: theme.colorScheme.onError,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-              // Zoom in
-              FloatingActionButton(
-                mini: true,
-                onPressed: () {
-                  _mapController.move(_center, (_zoom + 1).clamp(3, 18));
-                },
-                backgroundColor: theme.colorScheme.surface,
-                tooltip: 'Zoom in',
-                child: Icon(
-                  Icons.add,
-                  color: theme.colorScheme.onSurface,
-                ),
+              tooltip: 'Map Options',
+              color: theme.colorScheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(height: 8),
-              // Zoom out
-              FloatingActionButton(
-                mini: true,
-                onPressed: () {
-                  _mapController.move(_center, (_zoom - 1).clamp(3, 18));
-                },
-                backgroundColor: theme.colorScheme.surface,
-                tooltip: 'Zoom out',
-                child: Icon(
-                  Icons.remove,
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-            ],
+              onSelected: _handleMenuSelection,
+              itemBuilder: (context) => _buildMenuItems(theme),
+            ),
           ),
         ),
         
