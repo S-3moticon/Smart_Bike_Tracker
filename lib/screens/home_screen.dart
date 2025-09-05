@@ -1485,8 +1485,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               ),
                                             ],
                                           ),
-                                          // Display speed if available
-                                          if (point['speed'] != null && point['speed'] > 0) ...[
+                                          // Display speed (including 0.0 values)
+                                          if (point['speed'] != null) ...[
                                             Row(
                                               children: [
                                                 Icon(
@@ -1496,7 +1496,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                                 ),
                                                 const SizedBox(width: 4),
                                                 Text(
-                                                  'Speed: ${point['speed'].toStringAsFixed(1)} km/h',
+                                                  'Speed: ${(point['speed'] ?? 0.0).toStringAsFixed(1)} km/h',
                                                   style: theme.textTheme.bodyMedium,
                                                 ),
                                               ],

@@ -117,6 +117,8 @@ bool acquireGPSFix(GPSData& data, uint32_t maxAttempts) {
         fixAcquired = true;
         // Convert GPS datetime to Unix timestamp in milliseconds
         data.timestamp = parseGPSDateTimeToUnixMillis(data.datetime);
+        Serial.printf("🛰️ GPS Fix acquired: lat=%s, lon=%s, speed=%s km/h\n", 
+                      data.latitude.c_str(), data.longitude.c_str(), data.speed.c_str());
         saveGPSData(data);
       }
     }
@@ -164,6 +166,10 @@ bool requestGNSSInfo(String& response) {
  * Format: +CGNSINF: <run>,<fix>,<datetime>,<lat>,<lon>,<alt>,<speed>,...
  */
 bool parseGNSSData(const String& gpsData, GPSData& data) {
+  // Debug: show raw CGNSINF response
+  Serial.print("📡 Raw CGNSINF: ");
+  Serial.println(gpsData.substring(0, min(150, (int)gpsData.length())));
+  
   // Check for valid fix (run=1, fix=1)
   if (gpsData.indexOf("+CGNSINF: 1,1") == -1) {
     return false;
@@ -197,6 +203,8 @@ bool parseGNSSData(const String& gpsData, GPSData& data) {
   data.altitude = fields[5];
   data.speed = fields[6];
   data.course = fields[7];
+  
+  Serial.printf("📡 Parsed GPS fields: speed='%s' (field[6])\n", fields[6].c_str());
   
   // Validate coordinates
   if (data.latitude.length() > 0 && data.longitude.length() > 0 &&
@@ -330,6 +338,8 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   Serial.print(data.latitude);
   Serial.print("', lon='");
   Serial.print(data.longitude);
+  Serial.print("', speed='");
+  Serial.print(data.speed);
   Serial.println("'");
   
   float lat = data.latitude.toFloat();
@@ -356,17 +366,8 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   // Store speed (convert string to float)
   float speed = data.speed.toFloat();
   gpsLogPrefs.putFloat(keySpeed.c_str(), speed);
-  
-  Serial.print("📍 Storing GPS from data: index=");
-  Serial.print(logIndex);
-  Serial.print(", lat=");
-  Serial.print(lat, 7);
-  Serial.print(", lon=");
-  Serial.print(lon, 7);
-  Serial.print(", speed=");
-  Serial.print(data.speed.toFloat());
-  Serial.print("km/h, src=");
-  Serial.println(source);
+  Serial.printf("📍 Storing GPS from data: index=%d, lat=%.7f, lon=%.7f, speed=%.2fkm/h, src=%d\n", 
+                logIndex, lat, lon, speed, source);
   // Store 64-bit timestamp as two 32-bit values
   String keyTimeHi = "timeH_" + String(logIndex);
   String keyTimeLo = "timeL_" + String(logIndex);
@@ -408,14 +409,8 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
   gpsLogPrefs.putFloat(keySpeed.c_str(), 0.0);  // Default speed for phone GPS
   
-  Serial.print("📍 Storing GPS: index=");
-  Serial.print(logIndex);
-  Serial.print(", lat=");
-  Serial.print(lat, 7);
-  Serial.print(", lon=");
-  Serial.print(lon, 7);
-  Serial.print(", src=");
-  Serial.println(source);
+  Serial.printf("📍 Storing GPS (no speed): index=%d, lat=%.7f, lon=%.7f, src=%d\n",
+                logIndex, lat, lon, source);
   
   // For phone GPS (source 0), use an estimated Unix timestamp
   uint64_t timestamp;
