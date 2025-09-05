@@ -1485,6 +1485,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               ),
                                             ],
                                           ),
+                                          // Display speed if available
+                                          if (point['speed'] != null && point['speed'] > 0) ...[
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.speed,
+                                                  size: 14,
+                                                  color: theme.colorScheme.tertiary,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Speed: ${point['speed'].toStringAsFixed(1)} km/h',
+                                                  style: theme.textTheme.bodyMedium,
+                                                ),
+                                              ],
+                                            ),
+                                          ],
                                         ],
                                       ),
                                       trailing: Row(

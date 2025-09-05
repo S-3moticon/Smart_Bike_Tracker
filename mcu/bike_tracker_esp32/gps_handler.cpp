@@ -345,6 +345,7 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   // Create key for this entry
   String keyLat = "lat_" + String(logIndex);
   String keyLon = "lon_" + String(logIndex);
+  String keySpeed = "spd_" + String(logIndex);
   String keyTime = "time_" + String(logIndex);
   String keySrc = "src_" + String(logIndex);
   
@@ -352,13 +353,19 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   gpsLogPrefs.putFloat(keyLat.c_str(), lat);
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
   
+  // Store speed (convert string to float)
+  float speed = data.speed.toFloat();
+  gpsLogPrefs.putFloat(keySpeed.c_str(), speed);
+  
   Serial.print("📍 Storing GPS from data: index=");
   Serial.print(logIndex);
   Serial.print(", lat=");
   Serial.print(lat, 7);
   Serial.print(", lon=");
   Serial.print(lon, 7);
-  Serial.print(", src=");
+  Serial.print(", speed=");
+  Serial.print(data.speed.toFloat());
+  Serial.print("km/h, src=");
   Serial.println(source);
   // Store 64-bit timestamp as two 32-bit values
   String keyTimeHi = "timeH_" + String(logIndex);
@@ -392,12 +399,14 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
   // Create key for this entry
   String keyLat = "lat_" + String(logIndex);
   String keyLon = "lon_" + String(logIndex);
+  String keySpeed = "spd_" + String(logIndex);
   String keyTime = "time_" + String(logIndex);
   String keySrc = "src_" + String(logIndex);
   
   // Store the GPS point
   gpsLogPrefs.putFloat(keyLat.c_str(), lat);
   gpsLogPrefs.putFloat(keyLon.c_str(), lon);
+  gpsLogPrefs.putFloat(keySpeed.c_str(), 0.0);  // Default speed for phone GPS
   
   Serial.print("📍 Storing GPS: index=");
   Serial.print(logIndex);
@@ -478,12 +487,14 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
   // Read the entry
   String keyLat = "lat_" + String(actualIndex);
   String keyLon = "lon_" + String(actualIndex);
+  String keySpeed = "spd_" + String(actualIndex);
   String keyTimeHi = "timeH_" + String(actualIndex);
   String keyTimeLo = "timeL_" + String(actualIndex);
   String keySrc = "src_" + String(actualIndex);
   
   entry.lat = gpsLogPrefs.getFloat(keyLat.c_str(), 0);
   entry.lon = gpsLogPrefs.getFloat(keyLon.c_str(), 0);
+  entry.speed = gpsLogPrefs.getFloat(keySpeed.c_str(), 0);
   
   // Debug logging
   Serial.print("     Reading index ");
@@ -541,6 +552,7 @@ String getGPSHistoryJSON(int maxPoints) {
       json += "{";
       json += "\"lat\":" + String(entry.lat, 6) + ",";
       json += "\"lon\":" + String(entry.lon, 6) + ",";
+      json += "\"speed\":" + String(entry.speed, 1) + ",";
       json += "\"time\":" + String(entry.timestamp) + ",";
       json += "\"src\":" + String(entry.source);
       json += "}";
@@ -595,6 +607,7 @@ String getGPSHistoryPageJSON(int page, int pointsPerPage) {
         json += "{";
         json += "\"lat\":" + String(entry.lat, 7) + ",";
         json += "\"lon\":" + String(entry.lon, 7) + ",";
+        json += "\"speed\":" + String(entry.speed, 1) + ",";
         json += "\"time\":" + String(entry.timestamp) + ",";
         json += "\"src\":" + String(entry.source);
         json += "}";

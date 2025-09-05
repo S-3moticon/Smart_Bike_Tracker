@@ -749,6 +749,17 @@ class BikeBluetoothService {
             }
           }
           
+          // Extract speed (km/h)
+          if (point.containsKey('speed')) {
+            final speed = point['speed'];
+            developer.log('  speed value: $speed (type: ${speed.runtimeType})', name: 'BLE-GPSHistory');
+            if (speed is num) {
+              gpsPoint['speed'] = speed.toDouble();
+            } else if (speed is String) {
+              gpsPoint['speed'] = double.tryParse(speed) ?? 0.0;
+            }
+          }
+          
           // Extract source (0=Phone, 1=SIM7070G)
           if (point.containsKey('src')) {
             final src = point['src'];

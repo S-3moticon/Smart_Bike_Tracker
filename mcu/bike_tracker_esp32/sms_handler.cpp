@@ -295,6 +295,17 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
   secondMessage += gpsData.latitude;
   secondMessage += " ";
   secondMessage += gpsData.longitude;
+  secondMessage += "\n";
+  
+  // Add speed
+  secondMessage += "Speed: ";
+  if (gpsData.speed.length() > 0) {
+    float speedKmh = gpsData.speed.toFloat();
+    secondMessage += String(speedKmh, 1);
+    secondMessage += " km/h";
+  } else {
+    secondMessage += "N/A";
+  }
   
   // Add alert type indicator
   switch (type) {
@@ -351,6 +362,18 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
   secondMessage += gpsData.latitude;
   secondMessage += ",";
   secondMessage += gpsData.longitude;
+  secondMessage += "\n";
+  
+  // Add speed
+  secondMessage += "Speed: ";
+  if (gpsData.speed.length() > 0) {
+    float speedKmh = gpsData.speed.toFloat();
+    secondMessage += String(speedKmh, 1);
+    secondMessage += " km/h";
+  } else {
+    secondMessage += "N/A";
+  }
+  
   secondMessage += "\n\n";
   secondMessage += "Device Status\n";
   secondMessage += "User: ";
@@ -437,6 +460,17 @@ String formatAlertMessage(const GPSData& gpsData, AlertType type) {
   message += "\n";
   message += "Lon: ";
   message += gpsData.longitude;
+  message += "\n";
+  
+  // Always add speed (show 0 or N/A if unavailable)
+  message += "Speed: ";
+  if (gpsData.speed.length() > 0) {
+    float speedKmh = gpsData.speed.toFloat();
+    message += String(speedKmh, 1);
+    message += " km/h";
+  } else {
+    message += "N/A";
+  }
   
   return message;
 }
@@ -462,6 +496,17 @@ String formatSimpleLocationMessage(const GPSData& gpsData) {
   message += "\n";
   message += "Lon: ";
   message += gpsData.longitude;
+  message += "\n";
+  
+  // Always add speed (show 0 or N/A if unavailable)
+  message += "Speed: ";
+  if (gpsData.speed.length() > 0) {
+    float speedKmh = gpsData.speed.toFloat();
+    message += String(speedKmh, 1);
+    message += " km/h";
+  } else {
+    message += "N/A";
+  }
   
   return message;
 }

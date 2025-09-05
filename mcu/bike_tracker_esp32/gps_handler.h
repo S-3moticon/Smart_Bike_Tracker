@@ -30,6 +30,7 @@ struct GPSData {
 struct GPSLogEntry {
   float lat;
   float lon;
+  float speed;  // Speed in km/h
   uint64_t timestamp;  // Unix timestamp in milliseconds
   uint8_t source;  // 0=Phone, 1=SIM7070G
 };

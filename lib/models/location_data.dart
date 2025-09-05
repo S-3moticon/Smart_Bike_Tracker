@@ -4,6 +4,7 @@ class LocationData {
   final double latitude;
   final double longitude;
   final double accuracy;
+  final double speed; // Speed in km/h
   final DateTime timestamp;
   final String source;
   
@@ -11,6 +12,7 @@ class LocationData {
     required this.latitude,
     required this.longitude,
     this.accuracy = 10.0,
+    this.speed = 0.0,
     required this.timestamp,
     this.source = 'phone',
   });
