@@ -536,31 +536,30 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
  * Get GPS history as JSON string for BLE transmission
  */
 String getGPSHistoryJSON(int maxPoints) {
-  String json = "{\"history\":[";
+  String json;
+  json.reserve(512);  // Pre-allocate for efficiency
+  json = "{\"history\":[";
   
   int count = getGPSHistoryCount();
   int pointsToSend = min(maxPoints, count);
-  
-  // Start from most recent points
   int startIdx = max(0, count - pointsToSend);
   
+  bool first = true;
   for (int i = startIdx; i < count; i++) {
     GPSLogEntry entry;
     if (getGPSLogEntry(i, entry)) {
-      if (i > startIdx) json += ",";
+      if (!first) json += ",";
+      first = false;
       
-      json += "{";
-      json += "\"lat\":" + String(entry.lat, 6) + ",";
-      json += "\"lon\":" + String(entry.lon, 6) + ",";
-      json += "\"speed\":" + String(entry.speed, 1) + ",";
-      json += "\"time\":" + String(entry.timestamp) + ",";
-      json += "\"src\":" + String(entry.source);
-      json += "}";
+      json += "{\"lat\":" + String(entry.lat, 6);
+      json += ",\"lon\":" + String(entry.lon, 6);
+      json += ",\"speed\":" + String(entry.speed, 1);
+      json += ",\"time\":" + String(entry.timestamp);
+      json += ",\"src\":" + String(entry.source) + "}";
     }
   }
   
   json += "],\"count\":" + String(count) + "}";
-  
   return json;
 }
 
@@ -568,10 +567,11 @@ String getGPSHistoryJSON(int maxPoints) {
  * Get GPS history page as JSON string for pagination
  */
 String getGPSHistoryPageJSON(int page, int pointsPerPage) {
-  String json = "{\"history\":[";
+  String json;
+  json.reserve(512);
+  json = "{\"history\":[";
   
   int count = getGPSHistoryCount();
-  // Calculate totalPages first
   int totalPages = count > 0 ? (count + pointsPerPage - 1) / pointsPerPage : 0;
   int startIdx = page * pointsPerPage;
   int endIdx = min(startIdx + pointsPerPage, count);
@@ -590,15 +590,9 @@ String getGPSHistoryPageJSON(int page, int pointsPerPage) {
   for (int i = startIdx; i < endIdx; i++) {
     GPSLogEntry entry;
     if (getGPSLogEntry(i, entry)) {
-      // Debug log
-      Serial.print("   Point ");
-      Serial.print(i);
-      Serial.print(": lat=");
-      Serial.print(entry.lat, 7);
-      Serial.print(", lon=");
-      Serial.print(entry.lon, 7);
-      Serial.print(", src=");
-      Serial.println(entry.source);
+      // Simplified debug log
+      Serial.printf("   Point %d: lat=%.7f, lon=%.7f, src=%d\n", 
+                    i, entry.lat, entry.lon, entry.source);
       
       // Only add valid GPS points (not 0,0)
       if (entry.lat != 0.0 || entry.lon != 0.0) {
@@ -617,24 +611,15 @@ String getGPSHistoryPageJSON(int page, int pointsPerPage) {
     }
   }
   
-  Serial.print("   Added ");
-  Serial.print(validPoints);
-  Serial.println(" valid points to page");
+  Serial.printf("   Added %d valid points to page\n", validPoints);
   
-  json += "],";
-  json += "\"page\":" + String(page) + ",";
-  json += "\"totalPages\":" + String(totalPages) + ",";
-  json += "\"totalPoints\":" + String(count) + ",";
-  json += "\"pointsPerPage\":" + String(pointsPerPage) + "}";
+  json += "],\"page\":" + String(page);
+  json += ",\"totalPages\":" + String(totalPages);
+  json += ",\"totalPoints\":" + String(count);
+  json += ",\"pointsPerPage\":" + String(pointsPerPage) + "}";
   
-  Serial.print("   JSON response: page=");
-  Serial.print(page);
-  Serial.print(", totalPages=");
-  Serial.print(totalPages);
-  Serial.print(", totalPoints=");
-  Serial.print(count);
-  Serial.print(", validPoints=");
-  Serial.println(validPoints);
+  Serial.printf("   JSON response: page=%d, totalPages=%d, totalPoints=%d, validPoints=%d\n",
+                page, totalPages, count, validPoints);
   
   return json;
 }

@@ -452,10 +452,14 @@ void startBLEAdvertising() {
 // SLEEP MANAGEMENT (Optimized)
 // ============================================================================
 void enterSleepMode() {
-  if (inSleepMode) return;
+  if (inSleepMode) {
+    Serial.println("⚠️ Sleep blocked - already in sleep mode");
+    return;
+  }
   
   if (!disconnectSMSSent) {
-    // First disconnect - wake on motion only
+    // First disconnect - wake on motion only (light sleep)
+    Serial.println("💤 Entering light sleep (wake on motion)...");
     if (motionSensorInitialized) {
       motionSensor.configureWakeOnMotion();
       delay(100);
@@ -466,9 +470,11 @@ void enterSleepMode() {
     uint64_t ext_wakeup_pin_mask = (1ULL << INT1_PIN) | (1ULL << INT2_PIN);
     esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
     
+    inSleepMode = true;  // Set flag BEFORE sleeping
     esp_light_sleep_start();
+    inSleepMode = false;  // Clear flag AFTER waking
     
-    // Check wake reason
+    // Check wake reason after light sleep
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
       if (motionSensorInitialized) {
@@ -476,30 +482,48 @@ void enterSleepMode() {
         if (motionSensor.getMotionDelta() > getCurrentMotionThreshold()) {
           lastMotionTime = millis();
           motionWakeNeedsSMS = true;
-          inSleepMode = false;
+          Serial.println("⚡ Motion detected - waking up for SMS alert");
+          // Don't return - let main loop handle SMS and then call us again for deep sleep
           return;
         }
       }
     }
+    // If no significant motion, go back to light sleep
+    inSleepMode = true;
+    
   } else {
-    // After first SMS - deep sleep with timer wake
+    // After SMS sent - deep sleep with timer wake for next SMS
     unsigned long timeUntilNextSMS = config.updateInterval * 1000 - (millis() - lastDisconnectSMS);
+    
+    // Ensure minimum sleep time of 1 second
+    if (timeUntilNextSMS < 1000) {
+      timeUntilNextSMS = config.updateInterval * 1000;
+    }
+    
+    Serial.print("💤 DEEP SLEEP for ");
+    Serial.print(timeUntilNextSMS / 1000);
+    Serial.println(" seconds until next SMS...");
     
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     
+    // Power down motion sensor to save battery
     if (motionSensorInitialized) {
       motionSensor.setPowerDownMode();
     }
     
+    // Set pins to minimize current draw during deep sleep
     pinMode(INT1_PIN, INPUT_PULLDOWN);
     pinMode(INT2_PIN, INPUT_PULLDOWN);
     delay(100);
     
-    esp_sleep_enable_timer_wakeup(min(timeUntilNextSMS, config.updateInterval * 1000UL) * 1000ULL);
-    esp_deep_sleep_start();
+    // Set timer wake for next SMS interval
+    esp_sleep_enable_timer_wakeup(timeUntilNextSMS * 1000ULL);
+    
+    Serial.println("💤 Going to DEEP SLEEP now...");
+    Serial.flush();  // Ensure message is sent before sleep
+    esp_deep_sleep_start();  // This will restart the MCU
+    // Code never reaches here after deep sleep
   }
-  
-  inSleepMode = true;
 }
 
 float getCurrentMotionThreshold() {
@@ -594,25 +618,33 @@ void setup() {
     ret = nvs_flash_init();
   }
   
-  // Check wake reason
+  // Check wake reason and print startup message
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  
+  Serial.println("\n========================================");
+  Serial.println("🚀 MCU STARTUP");
+  Serial.print("⏰ Wake reason: ");
   
   switch(wakeup_reason) {
     case ESP_SLEEP_WAKEUP_EXT1:
+      Serial.println("MOTION WAKE (from deep sleep)");
       lastMotionTime = millis();
       if (disconnectSMSSent) lastDisconnectSMS = 0;
       break;
     case ESP_SLEEP_WAKEUP_TIMER:
+      Serial.println("TIMER WAKE (from deep sleep)");
       isTimerWake = true;
       lastDisconnectSMS = 0;
       break;
     default:
+      Serial.println("NORMAL BOOT (power on/reset)");
       disconnectSMSSent = false;
       lastDisconnectSMS = 0;
       isTimerWake = false;
       motionWakeNeedsSMS = false;
       motionSensorInitialized = false;
   }
+  Serial.println("========================================\n");
   
   // Initialize hardware
   pinMode(IR_SENSOR_PIN, INPUT);
@@ -620,18 +652,29 @@ void setup() {
   
   bool hasValidConfig = (strlen(config.phoneNumber) > 0 && config.alertEnabled);
   
-  // Handle timer wake
+  // Handle timer wake - send SMS and go back to deep sleep immediately
   if (isTimerWake && hasValidConfig) {
+    Serial.println("⏰ Timer wake - sending scheduled SMS...");
     stopBLEAdvertising();
     
+    // Try to get fresh GPS fix
     if (acquireGPSFix(currentGPS, 30)) {
       saveGPSData(currentGPS);
       logGPSPoint(currentGPS, 2);
+      Serial.println("✅ Fresh GPS acquired for SMS");
+    } else if (loadGPSData(currentGPS)) {
+      Serial.println("⚠️ Using cached GPS for SMS");
     }
     
+    // Send SMS with current status
     sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
     
+    // Go back to deep sleep immediately
     isTimerWake = false;
+    Serial.print("💤 Going back to deep sleep for ");
+    Serial.print(config.updateInterval);
+    Serial.println(" seconds...");
+    
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
     esp_deep_sleep_start();
@@ -718,13 +761,37 @@ void loop() {
   
   // Handle disconnected state
   if (!deviceConnected && strlen(config.phoneNumber) > 0 && config.alertEnabled) {
-    handleDisconnectedSMS();
+    bool smsSent = handleDisconnectedSMS();
     
-    // Check for sleep conditions
-    if (!isTimerWake && !gracePeriodActive && !inSleepMode && 
-        motionSensorInitialized && 
-        motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
-      enterSleepMode();
+    // Debug: Show current state
+    if (smsSent) {
+      Serial.println("✅ SMS sent successfully");
+      Serial.print("   disconnectSMSSent: ");
+      Serial.println(disconnectSMSSent ? "true" : "false");
+      Serial.print("   inSleepMode: ");
+      Serial.println(inSleepMode ? "true" : "false");
+    }
+    
+    // Sleep decision logic
+    if (!isTimerWake && !gracePeriodActive && motionSensorInitialized) {
+      // PRIORITY 1: If SMS was just sent, go to deep sleep immediately
+      if (smsSent && disconnectSMSSent) {
+        Serial.println("🚀 SMS sent - entering DEEP SLEEP immediately!");
+        delay(100);  // Allow serial to flush
+        inSleepMode = false;  // Clear any blocking flag
+        enterSleepMode();  // This will use deep sleep path since disconnectSMSSent=true
+      }
+      // PRIORITY 2: First disconnect, wait for motion
+      else if (!disconnectSMSSent && !inSleepMode && 
+               motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
+        Serial.println("💤 No motion timeout - entering light sleep...");
+        enterSleepMode();  // This will use light sleep path since disconnectSMSSent=false
+      }
+      // PRIORITY 3: Already sent SMS before, check if we should be in deep sleep
+      else if (disconnectSMSSent && !inSleepMode) {
+        Serial.println("⚠️ Should be in deep sleep but isn't - forcing deep sleep!");
+        enterSleepMode();  // Force deep sleep
+      }
     }
   }
   

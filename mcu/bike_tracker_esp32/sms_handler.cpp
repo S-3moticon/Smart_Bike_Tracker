@@ -17,106 +17,70 @@ static Preferences smsPrefs;
  * Note: Caller should disable GPS before calling this function
  */
 bool sendSMS(const String& phoneNumber, const String& message) {
-  
-  // Clear any pending SMS mode
+  // Exit any pending SMS mode
+  simSerial.write(27);
+  delay(300);
   clearSerialBuffer();
-  simSerial.write(27);  // ESC key to exit any pending mode
-  delay(500);  // Reduced delay
   
-  // Quick module check - no need for extensive verification
-  if (!sendATCommand("AT", "OK", 1000)) {
-    Serial.println("❌ Module not responding");
+  // Quick module and network check
+  if (!sendATCommand("AT", "OK", 1000) || !checkNetworkRegistration()) {
+    Serial.println("❌ Module/Network not ready");
     return false;
   }
-  
-  // Verify network registration with reduced delay
-  if (!checkNetworkRegistration()) {
-    Serial.println("❌ Network not registered");
-    return false;
-  }
-  delay(1000);  // Reduced delay
   
   // Set SMS text mode
-  if (!sendATCommand("AT+CMGF=1", "OK")) {
-    Serial.println("❌ Failed to set text mode");
+  if (!sendATCommand("AT+CMGF=1", "OK", 1000)) {
+    Serial.println("❌ Failed to set SMS text mode");
     return false;
   }
   
-  delay(500);
-  
-  // Set recipient number
-  String cmd = "AT+CMGS=\"" + phoneNumber + "\"";
-  simSerial.print(cmd);
-  simSerial.println();
+  // Send recipient number
+  clearSerialBuffer();
+  simSerial.println("AT+CMGS=\"" + phoneNumber + "\"");
+  delay(100);
   
   // Wait for prompt
-  delay(1000);  // Reduced delay
-  unsigned long start = millis();
-  bool promptReceived = false;
-  
-  while (millis() - start < 3000) {  // Reduced timeout
-    if (simSerial.available()) {
-      char c = simSerial.read();
-      if (c == '>') {
-        promptReceived = true;
-        break;
-      }
-    }
-    delay(10);
-  }
-  
-  if (!promptReceived) {
-    Serial.println("❌ No SMS prompt received");
-    // Send ESC to cancel SMS mode
-    simSerial.write(27);
-    delay(500);
-    clearSerialBuffer();
-    return false;
-  }
-  
-  // Send message content
-  delay(100);
-  simSerial.print(message);
-  delay(100);
-  simSerial.write(26);  // Ctrl+Z to send
-  
-  // Wait for confirmation with reduced timeout
-  start = millis();
-  String response = "";
-  
-  while (millis() - start < 15000) {  // Reduced timeout from 30s to 15s
-    if (simSerial.available()) {
-      char c = simSerial.read();
-      response += c;
+  uint32_t start = millis();
+  while (millis() - start < 2000) {
+    if (simSerial.available() && simSerial.read() == '>') {
+      // Send message
+      simSerial.print(message);
+      simSerial.write(26);  // Ctrl+Z
       
-      // Check for success response
-      if (response.indexOf("+CMGS:") != -1 && response.indexOf("OK") != -1) {
-        updateLastSMSTime();
-        return true;
+      // Wait for confirmation
+      String response = "";
+      start = millis();
+      while (millis() - start < 10000) {
+        if (simSerial.available()) {
+          response += (char)simSerial.read();
+          if (response.indexOf("+CMGS:") != -1) {
+            updateLastSMSTime();
+            return true;
+          }
+          if (response.indexOf("ERROR") != -1 || response.indexOf("+CMS ERROR") != -1) {
+            Serial.println("❌ SMS send error");
+            return false;
+          }
+        }
+        delay(10);
       }
-      
-      // Check for error - fail fast
-      if (response.indexOf("ERROR") != -1 || response.indexOf("+CMS ERROR") != -1) {
-        Serial.println("❌ SMS send error detected");
-        return false;
-      }
+      break;
     }
-    delay(10);
   }
   
+  // Cleanup on failure
+  simSerial.write(27);
+  clearSerialBuffer();
   Serial.println("❌ SMS send timeout");
   return false;
 }
 
 /*
- * Send SMS pair - optimized for sending two messages quickly
- * Assumes GPS is already disabled by caller
+ * Send SMS pair - optimized for two messages
  */
 bool sendSMSPair(const String& phoneNumber, const String& firstMsg, const String& secondMsg) {
-  
-  // Clear any pending SMS mode
-  clearSerialBuffer();
-  simSerial.write(27);  // ESC key
+  // Clear pending mode
+  simSerial.write(27);
   delay(500);  // Reduced delay
   
   // Quick module check
@@ -290,22 +254,13 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
   
   // Second message: instructions with coordinates
-  String secondMessage = "If the map did not load, Please Copy and Paste the Lat and Long to your Map application.\n";
-  secondMessage += "Location: ";
-  secondMessage += gpsData.latitude;
-  secondMessage += " ";
-  secondMessage += gpsData.longitude;
-  secondMessage += "\n";
-  
-  // Add speed
+  String secondMessage;
+  secondMessage.reserve(150);
+  secondMessage = "If the map did not load, Please Copy and Paste the Lat and Long to your Map application.\n";
+  secondMessage += "Location: " + gpsData.latitude + " " + gpsData.longitude + "\n";
   secondMessage += "Speed: ";
-  if (gpsData.speed.length() > 0) {
-    float speedKmh = gpsData.speed.toFloat();
-    secondMessage += String(speedKmh, 1);
-    secondMessage += " km/h";
-  } else {
-    secondMessage += "N/A";
-  }
+  secondMessage += (gpsData.speed.length() > 0) ? 
+    (String(gpsData.speed.toFloat(), 1) + " km/h") : "N/A";
   
   // Add alert type indicator
   switch (type) {
@@ -356,32 +311,18 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
   // First message: geo URI only
   String firstMessage = "geo:" + gpsData.latitude + "," + gpsData.longitude;
   
-  // Second message: simplified format without special characters
-  String secondMessage = "If map did not load, copy coordinates to your map app\n";
-  secondMessage += "Location: ";
-  secondMessage += gpsData.latitude;
-  secondMessage += ",";
-  secondMessage += gpsData.longitude;
-  secondMessage += "\n";
-  
-  // Add speed
+  // Second message: optimized string building
+  String secondMessage;
+  secondMessage.reserve(200);
+  secondMessage = "If map did not load, copy coordinates to your map app\n";
+  secondMessage += "Location: " + gpsData.latitude + "," + gpsData.longitude + "\n";
   secondMessage += "Speed: ";
-  if (gpsData.speed.length() > 0) {
-    float speedKmh = gpsData.speed.toFloat();
-    secondMessage += String(speedKmh, 1);
-    secondMessage += " km/h";
-  } else {
-    secondMessage += "N/A";
-  }
-  
-  secondMessage += "\n\n";
-  secondMessage += "Device Status\n";
+  secondMessage += (gpsData.speed.length() > 0) ? 
+    (String(gpsData.speed.toFloat(), 1) + " km/h") : "N/A";
+  secondMessage += "\n\nDevice Status\n";
   secondMessage += "User: ";
   secondMessage += userPresent ? "Present" : "Away";
-  secondMessage += "\n";
-  secondMessage += "SMS Interval: ";
-  secondMessage += String(updateInterval);
-  secondMessage += " sec";
+  secondMessage += "\nSMS Interval: " + String(updateInterval) + " sec";
   
   // Use the optimized SMS pair function
   bool result = sendSMSPair(phoneNumber, firstMessage, secondMessage);
