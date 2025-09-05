@@ -69,6 +69,9 @@ class LocationStorageService {
     return {
       'latitude': location.latitude,
       'longitude': location.longitude,
+      'speed': location.speed,
+      'accuracy': location.accuracy,
+      'source': location.source,
       'timestamp': location.timestamp.toIso8601String(),
     };
   }
@@ -77,6 +80,9 @@ class LocationStorageService {
     return LocationData(
       latitude: json['latitude'],
       longitude: json['longitude'],
+      speed: json['speed'] ?? 0.0,
+      accuracy: json['accuracy'] ?? 10.0,
+      source: json['source'] ?? 'phone',
       timestamp: DateTime.parse(json['timestamp']),
     );
   }

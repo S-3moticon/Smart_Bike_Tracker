@@ -71,9 +71,12 @@ class LocationService {
             _lastKnownPosition = lastPosition;
             _lastPositionTime = lastPosition.timestamp;
             
+            final speedKmh = lastPosition.speed * 3.6;
             final locationData = LocationData(
               latitude: lastPosition.latitude,
               longitude: lastPosition.longitude,
+              speed: speedKmh,
+              accuracy: lastPosition.accuracy,
               timestamp: lastPosition.timestamp,
             );
             _locationController.add(locationData);
@@ -101,9 +104,14 @@ class LocationService {
         _lastKnownPosition = position;
         _lastPositionTime = position.timestamp;
         
+        // Convert speed from m/s to km/h (Geolocator provides speed in m/s)
+        final speedKmh = position.speed * 3.6;
+        
         final locationData = LocationData(
           latitude: position.latitude,
           longitude: position.longitude,
+          speed: speedKmh,
+          accuracy: position.accuracy,
           timestamp: position.timestamp,
         );
         
@@ -114,9 +122,12 @@ class LocationService {
         
         // On error, try to use last known position if available
         if (_lastKnownPosition != null) {
+          final speedKmh = _lastKnownPosition!.speed * 3.6;
           final locationData = LocationData(
             latitude: _lastKnownPosition!.latitude,
             longitude: _lastKnownPosition!.longitude,
+            speed: speedKmh,
+            accuracy: _lastKnownPosition!.accuracy,
             timestamp: _lastKnownPosition!.timestamp,
           );
           _locationController.add(locationData);
@@ -177,9 +188,12 @@ class LocationService {
         if (age.inMinutes < 2) {
           // If position is less than 2 minutes old, use it immediately
           developer.log('Using recent cached position (${age.inSeconds}s old)', name: 'Location');
+          final speedKmh = lastPosition.speed * 3.6;
           return LocationData(
             latitude: lastPosition.latitude,
             longitude: lastPosition.longitude,
+            speed: speedKmh,
+            accuracy: lastPosition.accuracy,
             timestamp: lastPosition.timestamp,
           );
         }
@@ -210,9 +224,12 @@ class LocationService {
         developer.log('Got quick GPS fix', name: 'Location');
         
         // Return quick position immediately
+        final speedKmh = quickPosition.speed * 3.6;
         final quickData = LocationData(
           latitude: quickPosition.latitude,
           longitude: quickPosition.longitude,
+          speed: speedKmh,
+          accuracy: quickPosition.accuracy,
           timestamp: quickPosition.timestamp,
         );
         
@@ -239,9 +256,12 @@ class LocationService {
         _lastKnownPosition = position;
         _lastPositionTime = position.timestamp;
         
+        final speedKmh = position.speed * 3.6;
         return LocationData(
           latitude: position.latitude,
           longitude: position.longitude,
+          speed: speedKmh,
+          accuracy: position.accuracy,
           timestamp: position.timestamp,
         );
       }
@@ -251,9 +271,12 @@ class LocationService {
       // Last resort: return cached position if available
       if (_lastKnownPosition != null) {
         developer.log('Returning cached position as fallback', name: 'Location');
+        final speedKmh = _lastKnownPosition!.speed * 3.6;
         return LocationData(
           latitude: _lastKnownPosition!.latitude,
           longitude: _lastKnownPosition!.longitude,
+          speed: speedKmh,
+          accuracy: _lastKnownPosition!.accuracy,
           timestamp: _lastKnownPosition!.timestamp,
         );
       }

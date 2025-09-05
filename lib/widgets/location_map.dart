@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import '../models/location_data.dart';
 import '../services/map_download_service.dart';
 import 'offline_tile_provider.dart';
+import 'speedometer_widget.dart';
 
 class LocationMap extends StatefulWidget {
   final List<LocationData> locationHistory;
@@ -910,6 +911,39 @@ class _LocationMapState extends State<LocationMap> with AutomaticKeepAliveClient
                   ),
                 ],
               ),
+            ),
+          ),
+        
+        // Speedometer widget
+        if (widget.isTracking && widget.currentLocation != null)
+          Positioned(
+            bottom: 24,
+            right: 24,
+            child: SpeedometerWidget(
+              speed: widget.currentLocation!.speed,
+              isVisible: widget.isTracking,
+              source: widget.currentLocation!.source,
+            ),
+          ),
+        
+        // Speedometer for MCU GPS (when no current location but have MCU points)
+        if (!widget.isTracking && 
+            widget.currentLocation == null && 
+            widget.mcuGpsPoints != null && 
+            widget.mcuGpsPoints!.isNotEmpty)
+          Positioned(
+            bottom: 24,
+            right: 24,
+            child: Builder(
+              builder: (context) {
+                final latestPoint = widget.mcuGpsPoints!.first;
+                final speed = latestPoint['speed'] ?? 0.0;
+                return SpeedometerWidget(
+                  speed: speed.toDouble(),
+                  isVisible: true,
+                  source: 'mcu',
+                );
+              },
             ),
           ),
       ],
