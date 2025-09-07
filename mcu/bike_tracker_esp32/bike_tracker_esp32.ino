@@ -63,6 +63,10 @@ RTC_DATA_ATTR bool isTimerWake = false;
 RTC_DATA_ATTR bool motionWakeNeedsSMS = false;
 RTC_DATA_ATTR bool motionSensorInitialized = false;
 
+// External RTC variables from gps_handler.cpp
+extern RTC_DATA_ATTR int logIndex;
+extern RTC_DATA_ATTR int logCount;
+
 // Forward declarations
 void updateStatusCharacteristic();
 void syncGPSHistory();
@@ -311,7 +315,11 @@ bool handleDisconnectedSMS() {
       if (gpsValid) {
         status.lastGPSTime = currentTime;
         saveGPSData(currentGPS);
-        logGPSPoint(currentGPS, 2);
+        if (logGPSPoint(currentGPS, 2)) {
+          Serial.printf("📍 Motion wake GPS logged at index %d (total: %d)\n", 
+                        (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
+          delay(50);  // Allow NVS write to complete
+        }
       }
     }
     if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
@@ -335,7 +343,11 @@ bool handleDisconnectedSMS() {
       if (gpsValid) {
         status.lastGPSTime = currentTime;
         saveGPSData(currentGPS);
-        logGPSPoint(currentGPS, 2);
+        if (logGPSPoint(currentGPS, 2)) {
+          Serial.printf("📍 Periodic GPS logged at index %d (total: %d)\n", 
+                        (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
+          delay(50);  // Allow NVS write to complete
+        }
       }
     }
     
@@ -447,7 +459,10 @@ void enterSleepMode() {
     if (motionSensorInitialized) motionSensor.setPowerDownMode();
     pinMode(INT1_PIN, INPUT_PULLDOWN);
     pinMode(INT2_PIN, INPUT_PULLDOWN);
-    delay(50);
+    
+    // Ensure all NVS writes are completed before deep sleep
+    delay(100);
+    
     esp_sleep_enable_timer_wakeup(timeUntilNextSMS * 1000ULL);
     esp_deep_sleep_start();
   }
@@ -565,14 +580,26 @@ void setup() {
   
   if (isTimerWake && hasValidConfig) {
     stopBLEAdvertising();
+    Serial.println("📍 Timer wake - acquiring GPS for periodic update");
+    
     if (acquireGPSFix(currentGPS, 30)) {
       saveGPSData(currentGPS);
-      logGPSPoint(currentGPS, 2);
+      // Log GPS point and ensure it's committed to NVS
+      if (logGPSPoint(currentGPS, 2)) {
+        Serial.printf("📍 GPS logged successfully at index %d (total: %d)\n", 
+                      (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
+      }
     } else {
       loadGPSData(currentGPS);
+      Serial.println("⚠️ GPS acquisition failed, using cached data");
     }
+    
     sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
     isTimerWake = false;
+    
+    // Allow time for NVS writes to complete
+    delay(100);
+    
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
     esp_deep_sleep_start();

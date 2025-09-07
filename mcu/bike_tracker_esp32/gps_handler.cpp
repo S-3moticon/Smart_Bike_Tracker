@@ -312,17 +312,27 @@ float calculateDistance(const GPSData& pos1, const GPSData& pos2) {
 // ============================================================================
 
 static Preferences gpsLogPrefs;
-static int logIndex = 0;
-static int logCount = 0;
+// Use RTC memory to preserve these across deep sleep
+RTC_DATA_ATTR int logIndex = -1;  // -1 indicates uninitialized
+RTC_DATA_ATTR int logCount = -1;  // -1 indicates uninitialized
 
 /*
  * Initialize GPS history logging system
  */
 void initGPSHistory() {
+  // Check if RTC memory values are valid (survived deep sleep)
+  if (logIndex >= 0 && logIndex < MAX_GPS_HISTORY && logCount >= 0 && logCount <= MAX_GPS_HISTORY) {
+    Serial.printf("📍 GPS History preserved from RTC: index=%d, count=%d\n", logIndex, logCount);
+    return;  // Use RTC memory values
+  }
+  
+  // RTC memory invalid, load from NVS (cold boot or power loss)
   gpsLogPrefs.begin(GPS_LOG_NAMESPACE, false);
   logIndex = gpsLogPrefs.getInt("logIndex", 0);
   logCount = gpsLogPrefs.getInt("logCount", 0);
   gpsLogPrefs.end();
+  
+  Serial.printf("📍 GPS History loaded from NVS: index=%d, count=%d\n", logIndex, logCount);
 }
 
 /*
@@ -386,6 +396,8 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   // Save metadata
   gpsLogPrefs.putInt("logIndex", logIndex);
   gpsLogPrefs.putInt("logCount", logCount);
+  
+  // Close preferences to ensure data is written before potential deep sleep
   gpsLogPrefs.end();
   
   return true;
@@ -447,6 +459,8 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
   // Save metadata
   gpsLogPrefs.putInt("logIndex", logIndex);
   gpsLogPrefs.putInt("logCount", logCount);
+  
+  // Close preferences to ensure data is written before potential deep sleep
   gpsLogPrefs.end();
   
   return true;
@@ -627,6 +641,9 @@ void clearGPSHistory() {
   gpsLogPrefs.clear();
   gpsLogPrefs.end();
   
+  // Reset both RTC memory and NVS
   logIndex = 0;
   logCount = 0;
+  
+  Serial.println("📍 GPS History cleared");
 }
