@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
+
+import 'package:flutter/material.dart';
 import '../services/bluetooth_service.dart' as bike_ble;
 
 class DeviceStatusCard extends StatefulWidget {
@@ -20,18 +21,16 @@ class _DeviceStatusCardState extends State<DeviceStatusCard> {
   void initState() {
     super.initState();
     _subscribeToStatus();
-    // Only do initial refresh, rely on stream for updates
     _refreshStatus();
   }
   
   void _subscribeToStatus() {
     _statusSubscription = _bleService.deviceStatus.listen((status) {
-      if (mounted) {
-        setState(() {
-          _deviceStatus = status;
-          _isRefreshing = false; // Clear refreshing state on new data
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _deviceStatus = status;
+        _isRefreshing = false;
+      });
     });
   }
   

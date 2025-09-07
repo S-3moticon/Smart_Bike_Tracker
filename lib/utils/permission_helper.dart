@@ -190,6 +190,7 @@ class PermissionHelper {
     bool locationEnabled = await isLocationServiceEnabled();
     if (!locationEnabled) {
       developer.log('Location services disabled, requesting user to enable', name: 'Permissions');
+      if (!context.mounted) return false;
       bool userEnabledLocation = await requestLocationServices(context);
       
       if (!userEnabledLocation) {
@@ -217,12 +218,12 @@ class PermissionHelper {
         
       case AppPermissionStatus.locationServicesDisabled:
         // This shouldn't happen as we checked above, but handle it anyway
-        await requestLocationServices(context);
+        if (context.mounted) await requestLocationServices(context);
         return false;
         
       case AppPermissionStatus.denied:
       case AppPermissionStatus.permanentlyDenied:
-        await showPermissionDeniedDialog(context, 'Bluetooth and Location');
+        if (context.mounted) await showPermissionDeniedDialog(context, 'Bluetooth and Location');
         return false;
         
       default:

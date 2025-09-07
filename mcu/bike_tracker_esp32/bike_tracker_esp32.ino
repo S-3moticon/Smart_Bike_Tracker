@@ -1,5 +1,5 @@
-// Smart Bike Tracker - ESP32 MCU Code (Optimized)
-// Version: 2.0 - Performance Optimized
+// Smart Bike Tracker - ESP32 MCU Code
+// Version: 3.0 - Cleaned & Optimized
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -7,8 +7,6 @@
 #include <Preferences.h>
 #include "esp_sleep.h"
 #include "nvs_flash.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gatt_common_api.h"
 
 #include "ble_protocol.h"
 #include "sim7070g.h"
@@ -16,20 +14,16 @@
 #include "sms_handler.h"
 #include "lsm6dsl_handler.h"
 
-// ============================================================================
-// CONSTANTS & CONFIGURATION
-// ============================================================================
+// Constants
 #define IR_SENSOR_PIN 13
 #define BOOT_BLE_GRACE_PERIOD 30000
 #define STATUS_UPDATE_INTERVAL 5000
 #define IR_POLL_INTERVAL 250
 #define BLE_MTU_SIZE 512
 #define MAX_GPS_HISTORY_POINTS 7
-#define GPS_CACHE_TIMEOUT 300000  // 5 minutes
+#define GPS_CACHE_TIMEOUT 300000
 
-// ============================================================================
-// GLOBAL STATE VARIABLES  
-// ============================================================================
+// Global Variables
 BLEServer* pServer = nullptr;
 BLECharacteristic* pConfigChar = nullptr;
 BLECharacteristic* pStatusChar = nullptr;
@@ -40,14 +34,14 @@ volatile bool deviceConnected = false;
 bool oldDeviceConnected = false;
 Preferences preferences;
 
-struct Config {
+struct {
   char phoneNumber[20];
   uint16_t updateInterval;
   bool alertEnabled;
   float motionSensitivity;
 } config = {"", 600, true, 0.5};
 
-struct Status {
+struct {
   bool bleConnected;
   bool userPresent;
   String deviceMode;
@@ -55,11 +49,9 @@ struct Status {
 } status = {false, false, "DISCONNECTED", 0};
 
 GPSData currentGPS;
-extern LSM6DSL motionSensor;  // Defined in lsm6dsl_handler.cpp
+extern LSM6DSL motionSensor;
 
-// Timing variables
 unsigned long lastMotionTime = 0;
-unsigned long lastSMSTime = 0;
 unsigned long bootTime = 0;
 bool gracePeriodActive = false;
 bool inSleepMode = false;
@@ -86,10 +78,10 @@ void testGPSAndSMS();
 bool handleDisconnectedSMS();
 void enterSleepMode();
 void processSerialCommand(const String& cmd);
+void initBLE();
 
-// ============================================================================
-// BLE CALLBACKS (Optimized)
-// ============================================================================
+
+// BLE Callbacks
 class ServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) override {
       deviceConnected = true;
@@ -97,7 +89,7 @@ class ServerCallbacks: public BLEServerCallbacks {
       status.userPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
       updateStatusCharacteristic();
       
-      delay(1000);
+      delay(500);
       syncGPSHistory();
     }
 
@@ -138,11 +130,9 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
     }
 };
 
-// ============================================================================
-// CONFIGURATION MANAGEMENT (Optimized)
-// ============================================================================
+// Configuration Functions
 void loadConfiguration() {
-  preferences.begin("bike-tracker", true);  // Read-only
+  preferences.begin("bike-tracker", true);
   preferences.getString("phone", config.phoneNumber, sizeof(config.phoneNumber));
   config.updateInterval = preferences.getUShort("interval", 600);
   config.alertEnabled = preferences.getBool("alerts", true);
@@ -169,9 +159,7 @@ void clearConfiguration() {
   preferences.clear();
   preferences.end();
   
-  if (motionSensorInitialized) {
-    applyMotionSensitivity();
-  }
+  if (motionSensorInitialized) applyMotionSensitivity();
   updateStatusCharacteristic();
 }
 
@@ -179,7 +167,6 @@ void parseConfigJSON(const String& json) {
   bool changed = false;
   bool isCompact = json.indexOf("\"p\":") >= 0;
   
-  // Extract phone number
   int phoneStart = isCompact ? json.indexOf("\"p\":\"") + 5 : json.indexOf("\"phone_number\":\"") + 16;
   if (phoneStart >= 5) {
     int phoneEnd = json.indexOf("\"", phoneStart);
@@ -194,7 +181,6 @@ void parseConfigJSON(const String& json) {
     }
   }
   
-  // Extract update interval
   int intervalStart = isCompact ? json.indexOf("\"i\":") + 4 : json.indexOf("\"update_interval\":") + 18;
   if (intervalStart >= 4) {
     int intervalEnd = json.indexOf(",", intervalStart);
@@ -208,7 +194,6 @@ void parseConfigJSON(const String& json) {
     }
   }
   
-  // Extract alert enabled
   int alertStart = isCompact ? json.indexOf("\"a\":") + 4 : json.indexOf("\"alert_enabled\":") + 16;
   if (alertStart >= 4) {
     String alertSection = json.substring(alertStart, alertStart + 10);
@@ -218,7 +203,6 @@ void parseConfigJSON(const String& json) {
     changed = true;
   }
   
-  // Extract motion sensitivity
   int sensStart = isCompact ? json.indexOf("\"s\":") + 4 : json.indexOf("\"motion_sensitivity\":") + 21;
   if (sensStart >= 4) {
     int sensEnd = json.indexOf(',', sensStart);
@@ -239,9 +223,7 @@ void parseConfigJSON(const String& json) {
   }
 }
 
-// ============================================================================
-// SENSOR MANAGEMENT (Optimized)
-// ============================================================================
+// Sensor Functions
 inline void readIRSensor() {
   static bool lastUserPresent = false;
   bool currentUserPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
@@ -292,9 +274,7 @@ void applyMotionSensitivity() {
   motionSensor.setMotionThreshold(threshold);
 }
 
-// ============================================================================
-// GPS & SMS FUNCTIONS (Optimized)
-// ============================================================================
+// GPS & SMS Functions
 void syncGPSHistory() {
   if (!deviceConnected || !pHistoryChar) return;
   
@@ -323,10 +303,8 @@ bool handleDisconnectedSMS() {
   unsigned long currentTime = millis();
   unsigned long intervalMillis = config.updateInterval * 1000;
   
-  // Handle motion wake SMS
   if (motionWakeNeedsSMS) {
     stopBLEAdvertising();
-    
     bool gpsValid = currentGPS.valid && (currentTime - status.lastGPSTime < GPS_CACHE_TIMEOUT);
     if (!gpsValid) {
       gpsValid = acquireGPSFix(currentGPS, 30);
@@ -336,7 +314,6 @@ bool handleDisconnectedSMS() {
         logGPSPoint(currentGPS, 2);
       }
     }
-    
     if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
       disconnectSMSSent = true;
       lastDisconnectSMS = currentTime;
@@ -345,16 +322,12 @@ bool handleDisconnectedSMS() {
     }
   }
   
-  // Check for regular interval SMS
   bool shouldSend = (!disconnectSMSSent && motionSensor.detectMotion()) ||
                     (disconnectSMSSent && (currentTime - lastDisconnectSMS >= intervalMillis));
   
   if (shouldSend) {
     stopBLEAdvertising();
-    
-    if (!isSIM7070GInitialized() && !initializeSIM7070G()) {
-      return false;
-    }
+    if (!isSIM7070GInitialized() && !initializeSIM7070G()) return false;
     
     bool gpsValid = currentGPS.valid && (currentTime - status.lastGPSTime < GPS_CACHE_TIMEOUT);
     if (!gpsValid) {
@@ -376,9 +349,7 @@ bool handleDisconnectedSMS() {
   return false;
 }
 
-// ============================================================================
-// BLE MANAGEMENT (Optimized)
-// ============================================================================
+// BLE Functions
 void initBLE() {
   char deviceName[32];
   sprintf(deviceName, "%s%02X%02X", DEVICE_NAME_PREFIX, 
@@ -388,43 +359,31 @@ void initBLE() {
   BLEDevice::init(deviceName);
   BLEDevice::setMTU(BLE_MTU_SIZE);
   
-  // Configure Data Length Extension
-  esp_bd_addr_t bd_addr = {0};
-  esp_ble_gap_set_pkt_data_len(bd_addr, 251);
-  esp_ble_gap_set_prefer_conn_params(bd_addr, 0x06, 0x06, 0x00, 0x0190);
-  
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
   
   BLEService *pService = pServer->createService(SERVICE_UUID);
   
-  // Config characteristic
   pConfigChar = pService->createCharacteristic(CONFIG_CHAR_UUID,
                     BLECharacteristic::PROPERTY_WRITE);
   pConfigChar->setCallbacks(new ConfigCallbacks());
   
-  // Status characteristic  
   pStatusChar = pService->createCharacteristic(STATUS_CHAR_UUID,
                     BLECharacteristic::PROPERTY_READ | 
                     BLECharacteristic::PROPERTY_NOTIFY);
   pStatusChar->addDescriptor(new BLE2902());
   
-  // History characteristic
   pHistoryChar = pService->createCharacteristic(HISTORY_CHAR_UUID,
                     BLECharacteristic::PROPERTY_READ |
                     BLECharacteristic::PROPERTY_NOTIFY);
   pHistoryChar->addDescriptor(new BLE2902());
   
-  // Command characteristic
   pCommandChar = pService->createCharacteristic(COMMAND_CHAR_UUID,
                     BLECharacteristic::PROPERTY_WRITE);
   pCommandChar->setCallbacks(new CommandCallbacks());
   
-  // Initialize history
   String initialHistory = getGPSHistoryJSON(MAX_GPS_HISTORY_POINTS);
-  if (initialHistory.length() > BLE_MTU_SIZE) {
-    initialHistory = getGPSHistoryJSON(5);
-  }
+  if (initialHistory.length() > BLE_MTU_SIZE) initialHistory = getGPSHistoryJSON(5);
   pHistoryChar->setValue(initialHistory.c_str());
   
   pService->start();
@@ -448,18 +407,12 @@ void startBLEAdvertising() {
   }
 }
 
-// ============================================================================
-// SLEEP MANAGEMENT (Optimized)
-// ============================================================================
+// Sleep Functions
 void enterSleepMode() {
-  if (inSleepMode) {
-    Serial.println("⚠️ Sleep blocked - already in sleep mode");
-    return;
-  }
+  if (inSleepMode) return;
   
   if (!disconnectSMSSent) {
     // First disconnect - wake on motion only (light sleep)
-    Serial.println("💤 Entering light sleep (wake on motion)...");
     if (motionSensorInitialized) {
       motionSensor.configureWakeOnMotion();
       delay(100);
@@ -474,55 +427,29 @@ void enterSleepMode() {
     esp_light_sleep_start();
     inSleepMode = false;  // Clear flag AFTER waking
     
-    // Check wake reason after light sleep
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) {
-      if (motionSensorInitialized) {
-        motionSensor.clearMotionInterrupts();
-        if (motionSensor.getMotionDelta() > getCurrentMotionThreshold()) {
-          lastMotionTime = millis();
-          motionWakeNeedsSMS = true;
-          Serial.println("⚡ Motion detected - waking up for SMS alert");
-          // Don't return - let main loop handle SMS and then call us again for deep sleep
-          return;
-        }
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1 && motionSensorInitialized) {
+      motionSensor.clearMotionInterrupts();
+      if (motionSensor.getMotionDelta() > getCurrentMotionThreshold()) {
+        lastMotionTime = millis();
+        motionWakeNeedsSMS = true;
+        return;
       }
     }
-    // If no significant motion, go back to light sleep
     inSleepMode = true;
     
   } else {
-    // After SMS sent - deep sleep with timer wake for next SMS
     unsigned long timeUntilNextSMS = config.updateInterval * 1000 - (millis() - lastDisconnectSMS);
+    if (timeUntilNextSMS < 1000) timeUntilNextSMS = config.updateInterval * 1000;
     
-    // Ensure minimum sleep time of 1 second
-    if (timeUntilNextSMS < 1000) {
-      timeUntilNextSMS = config.updateInterval * 1000;
-    }
-    
-    Serial.print("💤 DEEP SLEEP for ");
-    Serial.print(timeUntilNextSMS / 1000);
-    Serial.println(" seconds until next SMS...");
     
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    
-    // Power down motion sensor to save battery
-    if (motionSensorInitialized) {
-      motionSensor.setPowerDownMode();
-    }
-    
-    // Set pins to minimize current draw during deep sleep
+    if (motionSensorInitialized) motionSensor.setPowerDownMode();
     pinMode(INT1_PIN, INPUT_PULLDOWN);
     pinMode(INT2_PIN, INPUT_PULLDOWN);
-    delay(100);
-    
-    // Set timer wake for next SMS interval
+    delay(50);
     esp_sleep_enable_timer_wakeup(timeUntilNextSMS * 1000ULL);
-    
-    Serial.println("💤 Going to DEEP SLEEP now...");
-    Serial.flush();  // Ensure message is sent before sleep
-    esp_deep_sleep_start();  // This will restart the MCU
-    // Code never reaches here after deep sleep
+    esp_deep_sleep_start();
   }
 }
 
@@ -532,9 +459,7 @@ float getCurrentMotionThreshold() {
          MOTION_THRESHOLD_LOW;
 }
 
-// ============================================================================
-// COMMAND PROCESSING (Optimized)
-// ============================================================================
+// Command Processing
 void processSerialCommand(const String& cmd) {
   static const struct {
     const char* command;
@@ -543,7 +468,7 @@ void processSerialCommand(const String& cmd) {
     {"test", []() { testGPSAndSMS(); }},
     {"gps", []() { 
       if (acquireGPSFix(currentGPS, 20)) {
-        Serial.printf("✅ GPS: %s, %s\n", currentGPS.latitude.c_str(), currentGPS.longitude.c_str());
+        Serial.printf("GPS: %s, %s\n", currentGPS.latitude.c_str(), currentGPS.longitude.c_str());
         saveGPSData(currentGPS);
         logGPSPoint(currentGPS, 1);
       }
@@ -554,7 +479,7 @@ void processSerialCommand(const String& cmd) {
       }
     }},
     {"status", []() {
-      Serial.printf("\n📊 Status:\n  👤 User: %s\n  📍 Mode: %s\n  🔗 BLE: %s\n  📞 Phone: %s\n  ⏱️ Interval: %ds\n",
+      Serial.printf("\nStatus:\n  User: %s\n  Mode: %s\n  BLE: %s\n  Phone: %s\n  Interval: %ds\n",
         status.userPresent ? "Present" : "Away",
         status.deviceMode.c_str(),
         deviceConnected ? "Connected" : "Disconnected",
@@ -562,7 +487,7 @@ void processSerialCommand(const String& cmd) {
         config.updateInterval);
     }},
     {"history", []() {
-      Serial.printf("\n📍 GPS History: %d points\n", getGPSHistoryCount());
+      Serial.printf("\nGPS History: %d points\n", getGPSHistoryCount());
       if (getGPSHistoryCount() > 0) {
         Serial.println(getGPSHistoryJSON(5));
       }
@@ -571,7 +496,7 @@ void processSerialCommand(const String& cmd) {
     {"clearconfig", []() { clearConfiguration(); }},
     {"sync", []() { if (deviceConnected) syncGPSHistory(); }},
     {"help", []() {
-      Serial.println("\n📚 Commands: test, gps, sms, status, history, clear, clearconfig, sync, help");
+      Serial.println("\nCommands: test, gps, sms, status, history, clear, clearconfig, sync, help");
     }}
   };
   
@@ -581,18 +506,14 @@ void processSerialCommand(const String& cmd) {
       return;
     }
   }
-  Serial.println("❓ Unknown command. Type 'help' for commands.");
+  Serial.println("Unknown command. Type 'help'");
 }
 
 void testGPSAndSMS() {
-  if (strlen(config.phoneNumber) == 0) {
-    Serial.println("❌ No phone number configured");
-    return;
-  }
+  if (strlen(config.phoneNumber) == 0) return;
   
-  bool gotFix = acquireGPSFix(currentGPS, 20);
-  if (gotFix) {
-    Serial.printf("✅ GPS: %s, %s\n", currentGPS.latitude.c_str(), currentGPS.longitude.c_str());
+  if (acquireGPSFix(currentGPS, 20)) {
+    Serial.printf("GPS: %s, %s\n", currentGPS.latitude.c_str(), currentGPS.longitude.c_str());
     saveGPSData(currentGPS);
     status.lastGPSTime = millis();
     logGPSPoint(currentGPS, 1);
@@ -604,121 +525,86 @@ void testGPSAndSMS() {
   }
 }
 
-// ============================================================================
-// SETUP
-// ============================================================================
+// Setup
 void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  // Initialize NVS
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    ret = nvs_flash_init();
+    nvs_flash_erase();
+    nvs_flash_init();
   }
   
-  // Check wake reason and print startup message
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  
-  Serial.println("\n========================================");
-  Serial.println("🚀 MCU STARTUP");
-  Serial.print("⏰ Wake reason: ");
+  Serial.println("\nMCU STARTUP");
   
   switch(wakeup_reason) {
     case ESP_SLEEP_WAKEUP_EXT1:
-      Serial.println("MOTION WAKE (from deep sleep)");
+      Serial.println("Wake: MOTION");
       lastMotionTime = millis();
       if (disconnectSMSSent) lastDisconnectSMS = 0;
       break;
     case ESP_SLEEP_WAKEUP_TIMER:
-      Serial.println("TIMER WAKE (from deep sleep)");
+      Serial.println("Wake: TIMER");
       isTimerWake = true;
       lastDisconnectSMS = 0;
       break;
     default:
-      Serial.println("NORMAL BOOT (power on/reset)");
+      Serial.println("Wake: BOOT");
       disconnectSMSSent = false;
       lastDisconnectSMS = 0;
       isTimerWake = false;
       motionWakeNeedsSMS = false;
       motionSensorInitialized = false;
   }
-  Serial.println("========================================\n");
   
-  // Initialize hardware
   pinMode(IR_SENSOR_PIN, INPUT);
   loadConfiguration();
-  
   bool hasValidConfig = (strlen(config.phoneNumber) > 0 && config.alertEnabled);
   
-  // Handle timer wake - send SMS and go back to deep sleep immediately
   if (isTimerWake && hasValidConfig) {
-    Serial.println("⏰ Timer wake - sending scheduled SMS...");
     stopBLEAdvertising();
-    
-    // Try to get fresh GPS fix
     if (acquireGPSFix(currentGPS, 30)) {
       saveGPSData(currentGPS);
       logGPSPoint(currentGPS, 2);
-      Serial.println("✅ Fresh GPS acquired for SMS");
-    } else if (loadGPSData(currentGPS)) {
-      Serial.println("⚠️ Using cached GPS for SMS");
+    } else {
+      loadGPSData(currentGPS);
     }
-    
-    // Send SMS with current status
     sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
-    
-    // Go back to deep sleep immediately
     isTimerWake = false;
-    Serial.print("💤 Going back to deep sleep for ");
-    Serial.print(config.updateInterval);
-    Serial.println(" seconds...");
-    
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
     esp_deep_sleep_start();
   }
   
-  // Initialize BLE
   if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER || !disconnectSMSSent) {
     initBLE();
   }
   initGPSHistory();
-  
-  // Load last GPS
   loadGPSData(currentGPS);
   
-  // Initialize motion sensor
   if (motionSensor.begin()) {
     motionSensorInitialized = true;
     applyMotionSensitivity();
     lastMotionTime = millis();
   }
   
-  // Initialize SIM7070G if configured
   if (hasValidConfig && wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
-    if (initializeSIM7070G()) {
-      disableRF();
+    if (initializeSIM7070G()) disableRF();
+    if (!deviceConnected) {
+      bootTime = millis();
+      gracePeriodActive = true;
     }
-  }
-  
-  // Start grace period on boot
-  if (hasValidConfig && !deviceConnected && wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
-    bootTime = millis();
-    gracePeriodActive = true;
   }
 }
 
-// ============================================================================
-// MAIN LOOP (Optimized)
-// ============================================================================
+// Main Loop
 void loop() {
   static unsigned long lastStatusUpdate = 0;
   static unsigned long lastIRCheck = 0;
   unsigned long currentTime = millis();
   
-  // Handle grace period
   if (gracePeriodActive) {
     if (deviceConnected) {
       gracePeriodActive = false;
@@ -729,10 +615,8 @@ void loop() {
     }
   }
   
-  // Handle connection state changes
   if (deviceConnected != oldDeviceConnected) {
     if (!deviceConnected) {
-      // Just disconnected
       stopBLEAdvertising();
       if (!motionSensorInitialized && motionSensor.begin()) {
         motionSensorInitialized = true;
@@ -745,69 +629,40 @@ void loop() {
       lastMotionTime = currentTime;
       inSleepMode = false;
     } else {
-      // Just connected
       if (!motionSensorInitialized && motionSensor.begin()) {
         motionSensorInitialized = true;
         applyMotionSensitivity();
       }
       if (!isTimerWake) disconnectSMSSent = false;
       updateStatusCharacteristic();
-      if (motionSensorInitialized) {
-        motionSensor.setLowPowerMode();
-      }
+      if (motionSensorInitialized) motionSensor.setLowPowerMode();
     }
     oldDeviceConnected = deviceConnected;
   }
   
-  // Handle disconnected state
   if (!deviceConnected && strlen(config.phoneNumber) > 0 && config.alertEnabled) {
     bool smsSent = handleDisconnectedSMS();
-    
-    // Debug: Show current state
-    if (smsSent) {
-      Serial.println("✅ SMS sent successfully");
-      Serial.print("   disconnectSMSSent: ");
-      Serial.println(disconnectSMSSent ? "true" : "false");
-      Serial.print("   inSleepMode: ");
-      Serial.println(inSleepMode ? "true" : "false");
-    }
-    
-    // Sleep decision logic
     if (!isTimerWake && !gracePeriodActive && motionSensorInitialized) {
-      // PRIORITY 1: If SMS was just sent, go to deep sleep immediately
-      if (smsSent && disconnectSMSSent) {
-        Serial.println("🚀 SMS sent - entering DEEP SLEEP immediately!");
-        delay(100);  // Allow serial to flush
-        inSleepMode = false;  // Clear any blocking flag
-        enterSleepMode();  // This will use deep sleep path since disconnectSMSSent=true
-      }
-      // PRIORITY 2: First disconnect, wait for motion
-      else if (!disconnectSMSSent && !inSleepMode && 
-               motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME) {
-        Serial.println("💤 No motion timeout - entering light sleep...");
-        enterSleepMode();  // This will use light sleep path since disconnectSMSSent=false
-      }
-      // PRIORITY 3: Already sent SMS before, check if we should be in deep sleep
-      else if (disconnectSMSSent && !inSleepMode) {
-        Serial.println("⚠️ Should be in deep sleep but isn't - forcing deep sleep!");
-        enterSleepMode();  // Force deep sleep
+      if ((smsSent && disconnectSMSSent) || 
+          (disconnectSMSSent && !inSleepMode) ||
+          (!disconnectSMSSent && !inSleepMode && 
+           motionSensor.getTimeSinceLastMotion() > NO_MOTION_SLEEP_TIME)) {
+        inSleepMode = false;
+        enterSleepMode();
       }
     }
   }
   
-  // Fast IR sensor polling
   if (currentTime - lastIRCheck > IR_POLL_INTERVAL) {
     lastIRCheck = currentTime;
     readIRSensor();
   }
   
-  // Periodic status updates
   if (deviceConnected && (currentTime - lastStatusUpdate > STATUS_UPDATE_INTERVAL)) {
     lastStatusUpdate = currentTime;
     updateStatusCharacteristic();
   }
   
-  // Process serial commands
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();

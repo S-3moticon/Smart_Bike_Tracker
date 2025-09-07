@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
+
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:geolocator/geolocator.dart';
 import '../models/bike_device.dart';
 import '../constants/ble_protocol.dart';
 import '../constants/app_constants.dart';
@@ -45,10 +46,6 @@ class BikeBluetoothService {
   // Bluetooth adapter state monitoring
   StreamSubscription? _adapterStateSubscription;
   
-  // Use storage keys from constants
-  static const String _prefKeyLastDevice = AppConstants.keyLastDevice;
-  static const String _prefKeyLastDeviceName = AppConstants.keyLastDeviceName;
-  static const String _prefKeyAutoConnect = AppConstants.keyAutoConnect;
   
   // Initialize Bluetooth state monitoring
   void initializeBluetoothMonitoring() {
@@ -230,19 +227,10 @@ class BikeBluetoothService {
       try {
         if (Platform.isAndroid) {
           final mtu = await bikeDevice.device.requestMtu(AppConstants.bleMtuSize);
-          developer.log('MTU negotiated: $mtu bytes (DLE enabled for packets up to 251 bytes)', name: 'BLE');
-          
-          // Log DLE status for debugging
-          if (mtu >= 512) {
-            developer.log('DLE: Full support confirmed (MTU=$mtu)', name: 'BLE');
-          } else if (mtu >= 185) {
-            developer.log('DLE: Partial support (MTU=$mtu, falling back to smaller packets)', name: 'BLE');
-          } else {
-            developer.log('DLE: Not supported (MTU=$mtu, using legacy mode)', name: 'BLE');
-          }
+          developer.log('MTU negotiated: $mtu bytes', name: 'BLE');
         }
       } catch (e) {
-        developer.log('MTU negotiation failed: $e (using default MTU)', name: 'BLE');
+        developer.log('MTU negotiation failed: $e', name: 'BLE');
       }
       
       // Discover services after connection
@@ -266,16 +254,9 @@ class BikeBluetoothService {
   Future<void> _discoverServices(BluetoothDevice device) async {
     try {
       final services = await device.discoverServices();
-      
       for (var service in services) {
-        developer.log('Found service: ${service.uuid}', name: 'BLE');
-        
         if (service.uuid.toString().toLowerCase() == BleProtocol.serviceUuid.toLowerCase()) {
           developer.log('Found bike tracker service', name: 'BLE');
-          
-          for (var char in service.characteristics) {
-            developer.log('  Characteristic: ${char.uuid}', name: 'BLE');
-          }
         }
       }
     } catch (e) {
@@ -1124,9 +1105,9 @@ class BikeBluetoothService {
   Future<void> _saveLastConnectedDevice(String deviceId, String deviceName) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefKeyLastDevice, deviceId);
-      await prefs.setString(_prefKeyLastDeviceName, deviceName);
-      await prefs.setBool(_prefKeyAutoConnect, true);
+      await prefs.setString(AppConstants.keyLastDevice, deviceId);
+      await prefs.setString(AppConstants.keyLastDeviceName, deviceName);
+      await prefs.setBool(AppConstants.keyAutoConnect, true);
       developer.log('Saved device for auto-connect: $deviceName ($deviceId)', name: 'BLE');
     } catch (e) {
       developer.log('Error saving device preferences: $e', name: 'BLE', error: e);
@@ -1136,12 +1117,11 @@ class BikeBluetoothService {
   Future<Map<String, String>?> getLastConnectedDevice() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final autoConnect = prefs.getBool(_prefKeyAutoConnect) ?? true;
-      
+      final autoConnect = prefs.getBool(AppConstants.keyAutoConnect) ?? true;
       if (!autoConnect) return null;
       
-      final deviceId = prefs.getString(_prefKeyLastDevice);
-      final deviceName = prefs.getString(_prefKeyLastDeviceName);
+      final deviceId = prefs.getString(AppConstants.keyLastDevice);
+      final deviceName = prefs.getString(AppConstants.keyLastDeviceName);
       
       if (deviceId != null && deviceName != null) {
         developer.log('Found saved device: $deviceName ($deviceId)', name: 'BLE');
@@ -1156,8 +1136,8 @@ class BikeBluetoothService {
   Future<void> clearLastConnectedDevice() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_prefKeyLastDevice);
-      await prefs.remove(_prefKeyLastDeviceName);
+      await prefs.remove(AppConstants.keyLastDevice);
+      await prefs.remove(AppConstants.keyLastDeviceName);
       developer.log('Cleared saved device', name: 'BLE');
     } catch (e) {
       developer.log('Error clearing device preferences: $e', name: 'BLE', error: e);
@@ -1167,7 +1147,7 @@ class BikeBluetoothService {
   Future<void> setAutoConnectEnabled(bool enabled) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_prefKeyAutoConnect, enabled);
+      await prefs.setBool(AppConstants.keyAutoConnect, enabled);
       developer.log('Auto-connect set to: $enabled', name: 'BLE');
     } catch (e) {
       developer.log('Error setting auto-connect preference: $e', name: 'BLE', error: e);
@@ -1177,7 +1157,7 @@ class BikeBluetoothService {
   Future<bool> isAutoConnectEnabled() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(_prefKeyAutoConnect) ?? true;
+      return prefs.getBool(AppConstants.keyAutoConnect) ?? true;
     } catch (e) {
       developer.log('Error getting auto-connect preference: $e', name: 'BLE', error: e);
       return true;

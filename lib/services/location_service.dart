@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+
 import 'package:geolocator/geolocator.dart';
 import '../models/location_data.dart';
 
@@ -29,16 +30,10 @@ class LocationService {
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          developer.log('Location permissions are denied', name: 'Location');
-          return false;
-        }
+        if (permission == LocationPermission.denied) return false;
       }
       
-      if (permission == LocationPermission.deniedForever) {
-        developer.log('Location permissions are permanently denied', name: 'Location');
-        return false;
-      }
+      if (permission == LocationPermission.deniedForever) return false;
       
       return true;
     } catch (e) {

@@ -262,11 +262,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           developer.log('Only ${history.length} points received, not clearing MCU (threshold: 25)', name: 'HomeScreen');
         }
       } else {
-        developer.log('History is null or component not mounted', name: 'HomeScreen');
-        setState(() {
-          _mcuGpsHistory = [];
-          _isLoadingMcuHistory = false;
-        });
+        if (mounted) {
+          setState(() {
+            _mcuGpsHistory = [];
+            _isLoadingMcuHistory = false;
+          });
+        }
       }
     } catch (e, stack) {
       developer.log('Error fetching MCU GPS history: $e', name: 'HomeScreen', error: e);
@@ -281,72 +282,58 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   
   void _setupListeners() {
     _connectionSubscription = _bleService.connectionState.listen((state) {
+      if (!mounted) return;
       setState(() {
         _connectionState = state;
         _isAutoConnecting = false;
         if (state == BluetoothConnectionState.connected) {
           _connectingDeviceId = null;
           _availableDevices.clear();
-          // Start location tracking when connected
-          _startLocationTracking();
-          // Sync saved configuration to device
-          _syncSavedConfiguration();
-          // Fetch MCU GPS history
-          _fetchMcuGpsHistory();
         } else if (state == BluetoothConnectionState.disconnected) {
           _connectingDeviceId = null;
-          // Clear MCU history on disconnect
           _mcuGpsHistory = [];
-          // Clear clicked history locations on disconnect
           _clickedPhoneLocations.clear();
           _clickedMcuLocations.clear();
-          // Stop location tracking when disconnected
-          _stopLocationTracking();
-          _checkBluetoothAndScan();
         }
       });
-    });
-    
-    _scanSubscription = _bleService.scanResults.listen((devices) {
-      setState(() {
-        _availableDevices = devices.where((d) => d.isBikeTracker).toList();
-      });
-    });
-    
-    // Subscribe to GPS history stream for real-time updates
-    _gpsHistorySubscription = _bleService.gpsHistoryStream.listen((history) {
-      if (mounted) {
-        setState(() {
-          // Reverse the history so newest points are first
-          _mcuGpsHistory = history.reversed.toList();
-          _isLoadingMcuHistory = false;
-        });
-        developer.log('GPS history updated via notification: ${history.length} points (reversed for display)', name: 'HomeScreen');
+      
+      if (state == BluetoothConnectionState.connected) {
+        _startLocationTracking();
+        _syncSavedConfiguration();
+        _fetchMcuGpsHistory();
+      } else if (state == BluetoothConnectionState.disconnected) {
+        _stopLocationTracking();
+        _checkBluetoothAndScan();
       }
     });
     
-    // Device status listener - track configuration state
-    _bleService.deviceStatus.listen((status) {
-      setState(() {
-        _currentDeviceStatus = status;
-      });
-      developer.log('Status update: user=${status['user'] ?? status['user_present']}, mode=${status['mode']}', name: 'HomeScreen');
+    _scanSubscription = _bleService.scanResults.listen((devices) {
+      if (!mounted) return;
+      setState(() => _availableDevices = devices.where((d) => d.isBikeTracker).toList());
     });
     
-    // Listen to Bluetooth adapter state changes
-    _bluetoothStateSubscription = _bleService.bluetoothState.listen((state) {
+    _gpsHistorySubscription = _bleService.gpsHistoryStream.listen((history) {
+      if (!mounted) return;
       setState(() {
-        _bluetoothState = state;
+        _mcuGpsHistory = history.reversed.toList();
+        _isLoadingMcuHistory = false;
       });
+    });
+    
+    _bleService.deviceStatus.listen((status) {
+      if (!mounted) return;
+      setState(() => _currentDeviceStatus = status);
+    });
+    
+    _bluetoothStateSubscription = _bleService.bluetoothState.listen((state) {
+      if (!mounted) return;
+      setState(() => _bluetoothState = state);
       
       if (state == BluetoothAdapterState.off) {
-        // Stop scanning if Bluetooth is turned off
         _isScanning = false;
         _availableDevices.clear();
-        // Show dialog to prompt user to turn on Bluetooth
         _showBluetoothOffDialog();
       } else if (state == BluetoothAdapterState.on) {
-        // Bluetooth turned on, start scanning if not connected
         if (_connectionState != BluetoothConnectionState.connected) {
           _checkBluetoothAndScan();
         }
@@ -404,7 +391,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       // Save to storage
       await _storageService.saveLocationHistory(_locationHistory);
       
-      UIHelpers.showInfo(context, 'Location refreshed');
+      if (mounted && context.mounted) {
+        UIHelpers.showInfo(context, 'Location refreshed');
+      }
       developer.log('Location refreshed: ${location.formattedCoordinates}', name: 'HomeScreen');
     } else if (mounted) {
       UIHelpers.showError(context, 'Could not get GPS location');
@@ -419,6 +408,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     setState(() {});
     
     // Check permissions and location services first
+    if (!mounted || !context.mounted) return;
     bool permissionsReady = await PermissionHelper.checkAndRequestPermissions(context);
     if (!permissionsReady) {
       developer.log('Permissions not ready for auto-connect', name: 'HomeScreen');
@@ -548,6 +538,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
     
     // Show normal disconnect confirmation
+    if (!mounted || !context.mounted) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

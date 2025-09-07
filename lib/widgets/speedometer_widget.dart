@@ -76,21 +76,6 @@ class _SpeedometerWidgetState extends State<SpeedometerWidget>
     }
   }
   
-  String _getSpeedDescription(double speed) {
-    if (speed == 0) {
-      return 'Stationary';
-    } else if (speed < 5) {
-      return 'Walking';
-    } else if (speed < 15) {
-      return 'Jogging';
-    } else if (speed < 25) {
-      return 'Cycling';
-    } else if (speed < 50) {
-      return 'Driving';
-    } else {
-      return 'Fast';
-    }
-  }
   
   @override
   Widget build(BuildContext context) {
