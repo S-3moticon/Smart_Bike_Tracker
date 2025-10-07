@@ -12,10 +12,10 @@
 #include <Wire.h>
 
 // Pin Definitions
-#define INT1_PIN GPIO_NUM_4     // LSM6DSL interrupt 1
-#define INT2_PIN GPIO_NUM_12     // LSM6DSL interrupt 2
-#define SDA_PIN 21              // I2C data
-#define SCL_PIN 22              // I2C clock
+#define INT1_PIN GPIO_NUM_0     // LSM6DSL interrupt 1
+#define INT2_PIN GPIO_NUM_1     // LSM6DSL interrupt 2
+#define SDA_PIN 6               // I2C data
+#define SCL_PIN 7               // I2C clock
 
 // LSM6DSL I2C Addresses
 #define LSM6DSL_ADDR1 0x6A

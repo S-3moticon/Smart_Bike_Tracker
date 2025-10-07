@@ -15,7 +15,7 @@
 #include "lsm6dsl_handler.h"
 
 // Constants
-#define IR_SENSOR_PIN 13
+#define IR_SENSOR_PIN 3
 #define BOOT_BLE_GRACE_PERIOD 30000
 #define STATUS_UPDATE_INTERVAL 5000
 #define IR_POLL_INTERVAL 250
@@ -432,15 +432,17 @@ void enterSleepMode() {
     }
     
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    uint64_t ext_wakeup_pin_mask = (1ULL << INT1_PIN) | (1ULL << INT2_PIN);
-    esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
-    
+    // ESP32-C3 uses gpio_wakeup API instead of ext1
+    gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_HIGH_LEVEL);
+    gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_HIGH_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+
     inSleepMode = true;  // Set flag BEFORE sleeping
     esp_light_sleep_start();
     inSleepMode = false;  // Clear flag AFTER waking
-    
+
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1 && motionSensorInitialized) {
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO && motionSensorInitialized) {
       motionSensor.clearMotionInterrupts();
       if (motionSensor.getMotionDelta() > getCurrentMotionThreshold()) {
         lastMotionTime = millis();
