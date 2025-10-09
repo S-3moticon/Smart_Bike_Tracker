@@ -181,38 +181,6 @@ void setup() {
   
   Serial.printf("Motion threshold: %.3fg (HIGH SENSITIVITY)\n\n", MOTION_THRESHOLD);
 
-  // INITIAL TEST: Verify sleep works at all (only on first boot)
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
-#if USE_DEEP_SLEEP
-    Serial.println("=== INITIAL DEEP SLEEP TEST ===");
-    Serial.println("⚠️  USB will disconnect! Press RESET after 5 sec to see output.");
-    Serial.println("Testing 5-second timer wake...");
-    Serial.flush();
-    delay(200);
-
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    esp_sleep_enable_timer_wakeup(5 * 1000000ULL);  // 5 seconds
-    esp_deep_sleep_start();  // Device will reboot after 5 seconds
-
-#else
-    Serial.println("=== INITIAL LIGHT SLEEP TEST ===");
-    Serial.println("Testing 2-second timer-only wake...");
-    Serial.flush();
-
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    esp_sleep_enable_timer_wakeup(2 * 1000000ULL);  // 2 seconds
-
-    int64_t test_start = esp_timer_get_time();
-    esp_err_t result = esp_light_sleep_start();
-    int64_t test_duration = (esp_timer_get_time() - test_start) / 1000;
-
-    Serial.printf("✓ Light sleep test complete! Duration: %lld ms, Result: %d\n",
-                  test_duration, result);
-    Serial.println("Light sleep API is working.\n");
-    delay(1000);
-#endif
-  }
-
   lastMotionTime = millis();
 }
 
@@ -624,24 +592,23 @@ void enterSleep() {
       delay(100);
     }
 
-    // Configure GPIO wake (NO timer backup)
+    // Configure GPIO wake using ESP32-C3 deep sleep API (NO timer backup)
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
-    Serial.println("Configuring GPIO wake sources...");
-    gpio_reset_pin((gpio_num_t)INT1_PIN);
-    gpio_reset_pin((gpio_num_t)INT2_PIN);
-    gpio_set_direction((gpio_num_t)INT1_PIN, GPIO_MODE_INPUT);
-    gpio_set_direction((gpio_num_t)INT2_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode((gpio_num_t)INT1_PIN, GPIO_FLOATING);
-    gpio_set_pull_mode((gpio_num_t)INT2_PIN, GPIO_FLOATING);
+    Serial.println("Configuring GPIO wake sources (ESP32-C3 deep sleep)...");
 
-    esp_err_t ret1 = gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_HIGH_LEVEL);
-    esp_err_t ret2 = gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_HIGH_LEVEL);
-    esp_err_t ret3 = esp_sleep_enable_gpio_wakeup();
+    // Set pins to INPUT mode (no pull resistors needed for LSM6DSL push-pull output)
+    pinMode(INT1_PIN, INPUT);
+    pinMode(INT2_PIN, INPUT);
 
-    Serial.printf("GPIO wake enable: INT1=%d INT2=%d Enable=%d\n", ret1, ret2, ret3);
+    // ESP32-C3 specific deep sleep GPIO wake API (bitmask + trigger level)
+    uint64_t gpio_mask = (1ULL << INT1_PIN) | (1ULL << INT2_PIN);
+    esp_err_t ret = esp_deep_sleep_enable_gpio_wakeup(gpio_mask, ESP_GPIO_WAKEUP_GPIO_HIGH);
 
-    // Verify pin states
+    Serial.printf("Deep sleep GPIO wake configured: result=%d\n", ret);
+    Serial.printf("GPIO mask: 0x%llX (INT1=%d, INT2=%d)\n", gpio_mask, INT1_PIN, INT2_PIN);
+
+    // Verify pin states before sleeping
     int int1_state = digitalRead(INT1_PIN);
     int int2_state = digitalRead(INT2_PIN);
     Serial.printf("Pin states: INT1=%s INT2=%s\n",
@@ -652,31 +619,14 @@ void enterSleep() {
       Serial.println("⚠️ WARNING: Pins already HIGH!");
     }
 
-    Serial.println("⚠️ ENTERING LIGHT SLEEP");
+    Serial.println("⚠️ ENTERING DEEP SLEEP (Phase 1)");
     Serial.println("Will wake ONLY on motion (no timer backup)");
     Serial.flush();
     delay(100);
 
-    // LIGHT SLEEP (no timer, GPIO wake only)
-    int64_t sleep_start = esp_timer_get_time();
-    esp_err_t sleep_result = esp_light_sleep_start();
-    int64_t sleep_duration = (esp_timer_get_time() - sleep_start) / 1000;
-
-    // After wake
-    Serial.println("\n>>> DEVICE WOKE UP <<<");
-    Serial.printf("Duration: %lld ms (result=%d)\n", sleep_duration, sleep_result);
-
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause == ESP_SLEEP_WAKEUP_GPIO) {
-      Serial.println("✓ Wake: GPIO (Motion detected!)");
-      Serial.printf("INT1=%s INT2=%s\n",
-                    digitalRead(INT1_PIN) ? "HIGH" : "LOW",
-                    digitalRead(INT2_PIN) ? "HIGH" : "LOW");
-      firstMotionSent = true;  // Move to phase 2
-      motionCount++;
-    } else {
-      Serial.printf("⚠️ Unexpected wake: %d\n", cause);
-    }
+    // DEEP SLEEP with GPIO wake only
+    esp_deep_sleep_start();
+    // Device resets on wake - execution continues in setup()
 
   } else {
     // === PHASE 2: Deep sleep with timer wake ===
