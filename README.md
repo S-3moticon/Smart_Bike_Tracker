@@ -14,7 +14,7 @@ A prototype anti-theft system for bicycles combining ESP32 hardware with a Flutt
 ## System Requirements
 
 ### Hardware
-- ESP32 Development Board
+- ESP32-C3 Supermini Development Board
 - SIM7070G GPS/GSM Module
 - LSM6DSL 6-axis IMU (Accelerometer/Gyroscope)
 - HW-201 IR Sensor
@@ -29,19 +29,19 @@ A prototype anti-theft system for bicycles combining ESP32 hardware with a Flutt
 
 ## Quick Start
 
-### MCU Setup (ESP32)
+### MCU Setup (ESP32-C3 Supermini)
 
-1. **Hardware Connections**:
+1. **Hardware Connections** (ESP32-C3 Supermini):
    ```
-   SIM7070G: RX=GPIO16, TX=GPIO17
-   LSM6DSL:  SDA=GPIO21, SCL=GPIO22, INT1=GPIO4, INT2=GPIO2
-   IR Sensor: GPIO13
+   SIM7070G: TX=GPIO21, RX=GPIO20
+   LSM6DSL:  SDA=GPIO6, SCL=GPIO7, INT1=GPIO0, INT2=GPIO1
+   IR Sensor: GPIO3
    ```
 
 2. **Upload Firmware**:
    - Open `mcu/bike_tracker_esp32/bike_tracker_esp32.ino` in Arduino IDE
    - Install required libraries (Wire, BLEDevice)
-   - Select ESP32 board and correct port
+   - Select "ESP32C3 Dev Module" board and correct port
    - Upload the sketch
 
 3. **Configuration**:
@@ -117,9 +117,9 @@ All data exchanged in JSON format:
 ### Common Issues
 
 1. **Device Not Found**:
-   - Ensure ESP32 is powered on
+   - Ensure ESP32-C3 is powered on
    - Check if device name starts with "BikeTrk"
-   - Reset ESP32 if needed
+   - Reset ESP32-C3 if needed
 
 2. **SMS Not Sending**:
    - Verify SIM card has credit

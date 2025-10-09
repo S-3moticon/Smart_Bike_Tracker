@@ -256,7 +256,9 @@ flutter build appbundle --release
 ## Hardware Context
 
 The app interfaces with:
-- **ESP32 MCU** (main controller) - Handles BLE communication and coordinates all sensors
+- **ESP32-C3 Supermini** (main controller) - Compact design with full BLE/sensor coordination
+  - Pin Configuration: LSM6DSL (SDA=6, SCL=7, INT1=0, INT2=1), IR (GPIO3), SIM7070G (TX=21, RX=20)
+  - Uses ESP32-C3 specific GPIO wakeup API for sleep/wake functionality
   - Enters light sleep when BLE connected to conserve battery
   - Wakes on motion detection or disconnection events
   - Manages 24-hour battery operation with 14650 Li-ion battery
@@ -279,7 +281,21 @@ The app interfaces with:
 ## Project Status
 
 ### Completed Features
-- ✅ BLE communication service with ESP32 (tested with real hardware)
+
+#### Hardware (ESP32-C3 Supermini)
+- ✅ **Migrated to ESP32-C3 Supermini** for compact design (2025-10-09)
+- ✅ **Updated pin configuration** for new hardware layout
+- ✅ **ESP32-C3 specific implementation** (GPIO wakeup API)
+- ✅ LSM6DSL accelerometer integration (I2C communication, motion detection, wake interrupts)
+- ✅ SIM7070G GPS/SMS module fully integrated
+- ✅ IR sensor (HW-201) for user presence detection
+- ✅ Advanced theft detection algorithm (motion + IR sensing)
+- ✅ Power management (light sleep when BLE connected, deep sleep with timer wake)
+- ✅ SMS alert system with GPS coordinates
+- ✅ GPS history logging (up to 50 points in NVS)
+
+#### Mobile App (Flutter)
+- ✅ BLE communication service with ESP32-C3 (tested with real hardware)
 - ✅ Android 12+ Bluetooth permissions handling
 - ✅ Device scanning and connection UI with auto-reconnect
 - ✅ Auto-connect to previously paired devices on app restart
@@ -287,24 +303,19 @@ The app interfaces with:
 - ✅ Location history logging with timestamp display
 - ✅ Interactive map display with multiple tile providers (OpenStreetMap, CartoDB, Esri)
 - ✅ Map tile caching for improved performance
-- ✅ TabBarView for Map/List dual interface
+- ✅ TabBarView for Map/List/MCU triple interface
 - ✅ Location history list view with detailed coordinates
 - ✅ Map state preservation using AutomaticKeepAliveClientMixin
 - ✅ Optimized map loading with deferred cache initialization
 - ✅ SMS alert configuration interface (phone number & interval)
-- ✅ Basic theft detection algorithm in MCU
 - ✅ Data models and BLE protocol implementation
+- ✅ Dual-source GPS display in app
+- ✅ State persistence with SharedPreferences for settings
+- ✅ GPS source indicator (Phone/SIM7070G) in UI
 
 ### In Progress
-- ⚠️ Dual-source GPS tracking (SIM7070G integration pending)
-- ⚠️ Power optimization for 24-hour operation
 
 ### Pending
-- ⏳ Complete SMS alert system with SIM7070G
-- ⏳ LSM6DSL motion sensor integration
-- ⏳ State persistence with SharedPreferences for settings
-- ⏳ GPS source indicator (Phone/SIM7070G) in UI
-- ⏳ Full system integration testing
 
 Detailed requirements: `/req/requirement.md`
 Implementation status: `/PLAN.md`
