@@ -101,7 +101,7 @@ public:
   void setNormalMode();
   
   // Wake-on-motion configuration
-  void configureWakeOnMotion();
+  void configureWakeOnMotion(float threshold);
   void clearMotionInterrupts();
   uint8_t getWakeSource();
   

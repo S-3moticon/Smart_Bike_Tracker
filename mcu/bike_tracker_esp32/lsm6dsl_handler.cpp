@@ -260,41 +260,46 @@ void LSM6DSL::setNormalMode() {
 /*
  * Configure wake-on-motion interrupts
  */
-void LSM6DSL::configureWakeOnMotion() {
+void LSM6DSL::configureWakeOnMotion(float threshold) {
   Serial.println("Configuring LSM6DSL for wake-on-motion...");
-  
+
   // Clear any pending interrupts
   clearMotionInterrupts();
-  
+
   // Reset interrupt configuration
   writeRegister(LSM6DSL_TAP_CFG, 0x00);
-  delay(10);
-  
-  // Keep accelerometer running at low power for motion detection
-  writeRegister(LSM6DSL_CTRL1_XL, 0x10);  // 12.5Hz, ±2g, low power
-  delay(10);
-  
+  delay(50);
+
+  // Keep accelerometer running at 52Hz for faster response
+  writeRegister(LSM6DSL_CTRL1_XL, 0x20);  // 52Hz, ±2g, low power
+  delay(50);
+
   // Configure wake-up detection
   writeRegister(LSM6DSL_WAKE_UP_DUR, 0x01);  // Require some duration
-  writeRegister(LSM6DSL_WAKE_UP_THS, 0x08);  // Less sensitive threshold (was 0x02)
   delay(10);
-  
+
+  // Set threshold using provided parameter
+  setMotionThreshold(threshold);
+  delay(10);
+
   // Enable interrupts with latch mode
   writeRegister(LSM6DSL_TAP_CFG, 0x81);  // Enable interrupts, latch mode
-  delay(10);
-  
+  delay(50);
+
   // Route wake-up to both INT1 and INT2
   writeRegister(LSM6DSL_MD1_CFG, 0x20);  // Wake-up on INT1
   writeRegister(LSM6DSL_MD2_CFG, 0x20);  // Wake-up on INT2
-  delay(10);
-  
+  delay(50);
+
   // Clear any pending interrupts again
   clearMotionInterrupts();
-  
+
   // Verify configuration
   uint8_t md1 = readRegister(LSM6DSL_MD1_CFG);
   uint8_t md2 = readRegister(LSM6DSL_MD2_CFG);
-  Serial.printf("Wake interrupts configured - MD1: 0x%02X, MD2: 0x%02X\n", md1, md2);
+  uint8_t ctrl1 = readRegister(LSM6DSL_CTRL1_XL);
+  Serial.printf("Wake interrupts configured - MD1: 0x%02X, MD2: 0x%02X, CTRL1: 0x%02X\n",
+                md1, md2, ctrl1);
 }
 
 /*

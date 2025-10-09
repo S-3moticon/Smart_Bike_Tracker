@@ -424,47 +424,48 @@ void enterSleepMode() {
   if (inSleepMode) return;
   
   if (!disconnectSMSSent) {
-    // First disconnect - wake on motion only (light sleep)
+    // First disconnect - wake on motion only (DEEP sleep)
     if (motionSensorInitialized) {
-      motionSensor.configureWakeOnMotion();
+      // Calculate sensitive threshold for wake interrupts (0.05g to 0.28g range)
+      float wakeThreshold = 0.28f - (config.motionSensitivity * 0.23f);
+      motionSensor.configureWakeOnMotion(wakeThreshold);
       delay(100);
       motionSensor.clearMotionInterrupts();
-    }
-    
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-    // ESP32-C3 uses gpio_wakeup API instead of ext1
-    gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_HIGH_LEVEL);
-    gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_HIGH_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
 
-    inSleepMode = true;  // Set flag BEFORE sleeping
-    esp_light_sleep_start();
-    inSleepMode = false;  // Clear flag AFTER waking
+      // Set pins to INPUT mode for LSM6DSL push-pull output
+      pinMode(INT1_PIN, INPUT);
+      pinMode(INT2_PIN, INPUT);
 
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO && motionSensorInitialized) {
-      motionSensor.clearMotionInterrupts();
-      if (motionSensor.getMotionDelta() > getCurrentMotionThreshold()) {
-        lastMotionTime = millis();
-        motionWakeNeedsSMS = true;
-        return;
-      }
+      // ESP32-C3 deep sleep GPIO wake API (bitmask + trigger level)
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+      uint64_t gpio_mask = (1ULL << INT1_PIN) | (1ULL << INT2_PIN);
+      esp_deep_sleep_enable_gpio_wakeup(gpio_mask, ESP_GPIO_WAKEUP_GPIO_HIGH);
+
+      Serial.println("Entering deep sleep - wake on motion");
+      Serial.flush();
+      delay(100);
+
+      motionWakeNeedsSMS = true;
+      esp_deep_sleep_start();
+      // Device resets on wake - execution continues in setup()
     }
-    inSleepMode = true;
     
   } else {
     unsigned long timeUntilNextSMS = config.updateInterval * 1000 - (millis() - lastDisconnectSMS);
     if (timeUntilNextSMS < 1000) timeUntilNextSMS = config.updateInterval * 1000;
     
-    
+
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     if (motionSensorInitialized) motionSensor.setPowerDownMode();
-    pinMode(INT1_PIN, INPUT_PULLDOWN);
-    pinMode(INT2_PIN, INPUT_PULLDOWN);
-    
+    pinMode(INT1_PIN, INPUT);
+    pinMode(INT2_PIN, INPUT);
+
     // Ensure all NVS writes are completed before deep sleep
     delay(100);
-    
+
+    Serial.printf("Entering deep sleep - wake in %lu seconds\n", timeUntilNextSMS / 1000);
+    Serial.flush();
+
     esp_sleep_enable_timer_wakeup(timeUntilNextSMS * 1000ULL);
     esp_deep_sleep_start();
   }
@@ -557,8 +558,8 @@ void setup() {
   Serial.println("\nMCU STARTUP");
   
   switch(wakeup_reason) {
-    case ESP_SLEEP_WAKEUP_EXT1:
-      Serial.println("Wake: MOTION");
+    case ESP_SLEEP_WAKEUP_GPIO:
+      Serial.println("Wake: MOTION (GPIO)");
       lastMotionTime = millis();
       if (disconnectSMSSent) lastDisconnectSMS = 0;
       break;
@@ -607,7 +608,9 @@ void setup() {
     esp_deep_sleep_start();
   }
   
-  if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER || !disconnectSMSSent) {
+  // Skip BLE initialization if waking from motion to send SMS
+  if ((wakeup_reason != ESP_SLEEP_WAKEUP_TIMER || !disconnectSMSSent) &&
+      !motionWakeNeedsSMS) {
     initBLE();
   }
   initGPSHistory();
