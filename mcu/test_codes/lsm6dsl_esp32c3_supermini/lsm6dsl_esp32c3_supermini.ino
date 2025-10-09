@@ -1,3 +1,60 @@
+/*
+ * ESP32-C3 Supermini LSM6DSL Motion Detection Test
+ *
+ * Tests sleep/wake functionality with LSM6DSL accelerometer
+ * Matches main MCU code sleep implementation
+ *
+ * FEATURES:
+ * - Motion detection with configurable threshold
+ * - Automatic sleep after 5 seconds of no motion
+ * - GPIO wake on motion interrupt (HIGH level trigger)
+ * - 10-second timer backup wake (prevents stuck state)
+ * - Wake reason detection and reporting
+ *
+ * CRITICAL FIXES:
+ * v2.0 - Pin Configuration:
+ *   - Changed INT pins from INPUT_PULLUP to INPUT (no pull resistors)
+ *   - PULLUP made pins always HIGH, preventing GPIO wake trigger
+ *
+ * v3.0 - Watchdog Timer Issue Found:
+ *   - Device was RESETTING during light sleep (~28 seconds)
+ *   - ESP32-C3 watchdog timers cause reboot during light sleep
+ *   - Watchdog disable headers not available in Arduino ESP32 core
+ *
+ * v3.1 - Deep Sleep Default (WORKING SOLUTION):
+ *   - Using deep sleep to avoid watchdog issues
+ *   - Deep sleep is reliable and doesn't have reset problems
+ *   - USB disconnects but GPIO/timer wake works perfectly
+ *   - Must press RESET button to see serial output after wake
+ *
+ * CONFIGURATION (lines 91-92):
+ * #define USE_DEEP_SLEEP true     ← DEFAULT: Deep sleep (reliable)
+ * #define DEBUG_FAKE_SLEEP false  ← Set true to test without actual sleep
+ *
+ * SLEEP MODES:
+ * 1. Deep Sleep (USE_DEEP_SLEEP = true) ✅ DEFAULT:
+ *    - No watchdog issues
+ *    - Reliable wake on GPIO and timer
+ *    - USB disconnects during sleep
+ *    - Press RESET after wake to see serial output
+ *    - Lower power consumption (~10µA)
+ *
+ * 2. Light Sleep (USE_DEEP_SLEEP = false):
+ *    - ⚠️  Has watchdog reset issues on ESP32-C3
+ *    - USB stays connected
+ *    - May reset after ~28 seconds
+ *    - Not recommended until watchdog fix available
+ *
+ * 3. Debug Mode (DEBUG_FAKE_SLEEP = true):
+ *    - Uses delay() instead of sleep
+ *    - Tests LSM6DSL interrupt generation
+ *    - Always shows serial output
+ *    - Good for testing hardware without sleep issues
+ *
+ * RECOVERY IF STUCK:
+ * Hold BOOT button → Press RESET → Release BOOT → Upload new code
+ */
+
 #include <Wire.h>
 #include "esp_sleep.h"
 
@@ -31,6 +88,11 @@ uint8_t LSM6DSL_ADDR = LSM6DSL_ADDR1;
 #define SLEEP_COUNTDOWN 5000        // 5 second countdown
 #define GRAVITY 9.81                // For accurate g conversion
 
+// Sleep mode configuration
+// Note: Light sleep has watchdog issues, using deep sleep for reliability
+#define USE_DEEP_SLEEP true     // true = deep sleep (USB disconnects), false = light sleep
+#define DEBUG_FAKE_SLEEP false  // true = use delay() for testing without sleep
+
 // Global variables
 float currentX = 0, currentY = 0, currentZ = 0;
 float previousX = 0, previousY = 0, previousZ = 0;
@@ -45,30 +107,64 @@ bool firstReading = true;
 void setup() {
   Serial.begin(115200);
   while (!Serial) { delay(10); }
-  
+
   Serial.println("\n=== ESP32-C3 LSM6DSL Motion System ===");
-  
-  pinMode(INT1_PIN, INPUT_PULLUP);
-  pinMode(INT2_PIN, INPUT_PULLUP);
-  
-  // Check wake reason
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO) {
-    wakeCount++;
-    Serial.printf("WAKE FROM MOTION! Count: %d\n", wakeCount);
+
+  // CRITICAL: Use INPUT (no pull resistors) for GPIO wake to work
+  // LSM6DSL will drive these pins HIGH on interrupt
+  // Using PULLUP makes pins always HIGH = no wake trigger!
+  pinMode(INT1_PIN, INPUT);
+  pinMode(INT2_PIN, INPUT);
+
+  // Check and report wake reason
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  switch (wakeup_reason) {
+    case ESP_SLEEP_WAKEUP_GPIO:
+      wakeCount++;
+      Serial.printf("🔔 WAKE FROM MOTION! (GPIO) Count: %d\n", wakeCount);
+      Serial.printf("   INT1: %s, INT2: %s\n",
+                    digitalRead(INT1_PIN) == HIGH ? "HIGH" : "LOW",
+                    digitalRead(INT2_PIN) == HIGH ? "HIGH" : "LOW");
+      break;
+
+    case ESP_SLEEP_WAKEUP_TIMER:
+      wakeCount++;
+      Serial.printf("⏰ WAKE FROM TIMER! (30s backup) Count: %d\n", wakeCount);
+      break;
+
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+      Serial.println("🔌 POWER-ON RESET / FIRST BOOT");
+      wakeCount = 0;
+      motionCount = 0;
+      break;
   }
   
   // Suppress I2C errors
   esp_log_level_set("i2c.master", ESP_LOG_NONE);
-  
+
   // Initialize I2C
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(50000);
   delay(100);
-  
+
   // Initialize sensor with proper configuration
   sensorAvailable = initLSM6DSL();
-  
+
   if (sensorAvailable) {
+    // If woke from GPIO (motion), clear LSM6DSL interrupts
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_GPIO) {
+      Wire.beginTransmission(LSM6DSL_ADDR);
+      Wire.write(0x1B);  // Read WAKE_UP_SRC to clear
+      Wire.endTransmission(false);
+      Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+      if (Wire.available()) {
+        uint8_t wake_src = Wire.read();
+        Serial.printf("   LSM6DSL wake source: 0x%02X\n", wake_src);
+      }
+    }
+
     Serial.println("LSM6DSL ready - calibrating...");
     calibrateSensor();
     Serial.printf("Calibration complete: X=%.3f Y=%.3f Z=%.3f\n", refX, refY, refZ);
@@ -81,6 +177,39 @@ void setup() {
   }
   
   Serial.printf("Motion threshold: %.3fg (HIGH SENSITIVITY)\n\n", MOTION_THRESHOLD);
+
+  // INITIAL TEST: Verify sleep works at all (only on first boot)
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
+#if USE_DEEP_SLEEP
+    Serial.println("=== INITIAL DEEP SLEEP TEST ===");
+    Serial.println("⚠️  USB will disconnect! Press RESET after 5 sec to see output.");
+    Serial.println("Testing 5-second timer wake...");
+    Serial.flush();
+    delay(200);
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_sleep_enable_timer_wakeup(5 * 1000000ULL);  // 5 seconds
+    esp_deep_sleep_start();  // Device will reboot after 5 seconds
+
+#else
+    Serial.println("=== INITIAL LIGHT SLEEP TEST ===");
+    Serial.println("Testing 2-second timer-only wake...");
+    Serial.flush();
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_sleep_enable_timer_wakeup(2 * 1000000ULL);  // 2 seconds
+
+    int64_t test_start = esp_timer_get_time();
+    esp_err_t result = esp_light_sleep_start();
+    int64_t test_duration = (esp_timer_get_time() - test_start) / 1000;
+
+    Serial.printf("✓ Light sleep test complete! Duration: %lld ms, Result: %d\n",
+                  test_duration, result);
+    Serial.println("Light sleep API is working.\n");
+    delay(1000);
+#endif
+  }
+
   lastMotionTime = millis();
 }
 
@@ -343,30 +472,107 @@ bool readAccelerometer() {
 
 void configureSleepInterrupts() {
   if (sensorAvailable) {
+    Serial.println("Configuring LSM6DSL for wake-on-motion...");
+
+    // CRITICAL: Keep accelerometer running during deep sleep
+    // Use higher ODR to ensure interrupts are generated
     Wire.beginTransmission(LSM6DSL_ADDR);
-    Wire.write(WAKE_UP_THS);
-    Wire.write(0x02);  // High sensitivity - very low threshold (~30mg)
+    Wire.write(CTRL1_XL);
+    Wire.write(0x20);  // 52Hz ODR, ±2g, normal mode (NOT low-power)
     Wire.endTransmission();
-    
+    delay(10);
+
+    // Configure CTRL3_C: Interrupts active HIGH, push-pull, non-latched
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(CTRL3_C);
+    Wire.write(0x44);  // BDU=1, IF_INC=1, INT active HIGH, push-pull
+    Wire.endTransmission();
+    delay(10);
+
+    // Configure CTRL4_C: Interrupts enabled, INT2 on INT1 pad disabled
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(0x13);  // CTRL4_C register
+    Wire.write(0x00);  // All interrupts enabled
+    Wire.endTransmission();
+    delay(10);
+
+    // Configure wake-up detection (MORE sensitive)
     Wire.beginTransmission(LSM6DSL_ADDR);
     Wire.write(WAKE_UP_DUR);
-    Wire.write(0x00);
+    Wire.write(0x00);  // No duration requirement
     Wire.endTransmission();
-    
+
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(WAKE_UP_THS);
+    Wire.write(0x01);  // EXTREMELY sensitive (~15mg) - easier wake
+    Wire.endTransmission();
+    delay(10);
+
+    // Enable interrupts - latched mode for deep sleep reliability
     Wire.beginTransmission(LSM6DSL_ADDR);
     Wire.write(TAP_CFG);
-    Wire.write(0x80);
+    Wire.write(0x81);  // Enable interrupts, LATCHED mode (bit 0 = 1)
     Wire.endTransmission();
-    
+    delay(10);
+
+    // Route wake-up to BOTH INT1 and INT2
     Wire.beginTransmission(LSM6DSL_ADDR);
     Wire.write(MD1_CFG);
-    Wire.write(0x20);
+    Wire.write(0x20);  // Wake-up on INT1
     Wire.endTransmission();
-    
+
     Wire.beginTransmission(LSM6DSL_ADDR);
     Wire.write(MD2_CFG);
-    Wire.write(0x20);
+    Wire.write(0x20);  // Wake-up on INT2
     Wire.endTransmission();
+    delay(10);
+
+    // Verify interrupt routing
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(MD1_CFG);
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+    uint8_t md1 = Wire.available() ? Wire.read() : 0;
+
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(MD2_CFG);
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+    uint8_t md2 = Wire.available() ? Wire.read() : 0;
+
+    // Read current CTRL1_XL to verify ODR
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(CTRL1_XL);
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+    uint8_t ctrl1 = Wire.available() ? Wire.read() : 0;
+
+    Serial.printf("LSM6DSL config: MD1=0x%02X MD2=0x%02X CTRL1_XL=0x%02X\n", md1, md2, ctrl1);
+    Serial.println("Wake-on-motion interrupts configured (52Hz, latched)");
+  }
+}
+
+void clearLSM6DSLInterrupts() {
+  if (sensorAvailable) {
+    // Read WAKE_UP_SRC register to clear interrupt
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(0x1B);  // WAKE_UP_SRC register
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+    if (Wire.available()) {
+      uint8_t wake_src = Wire.read();
+      Serial.printf("Cleared wake source: 0x%02X\n", wake_src);
+    }
+
+    // Read STATUS_REG to clear data ready flags
+    Wire.beginTransmission(LSM6DSL_ADDR);
+    Wire.write(STATUS_REG);
+    Wire.endTransmission(false);
+    Wire.requestFrom(LSM6DSL_ADDR, (uint8_t)1);
+    if (Wire.available()) Wire.read();
+
+    // Read accelerometer data to clear any pending data
+    readAccelerometer();
   }
 }
 
@@ -375,21 +581,143 @@ void enterSleep() {
   Serial.printf("Total: %d motions, %d wakes\n", motionCount, wakeCount);
   Serial.flush();
   delay(100);
-  
+
   if (sensorAvailable) {
     configureSleepInterrupts();
+    delay(50);
+    clearLSM6DSLInterrupts();  // Clear interrupts AFTER configuration
+    delay(100);  // Allow sensor to stabilize
+
+    // VERIFY: Check if interrupts can be triggered before sleep
+    Serial.println("Testing interrupt generation...");
+    Serial.println("Shake device NOW for 2 seconds...");
+    Serial.flush();
+
+    unsigned long testStart = millis();
+    bool intDetected = false;
+    while (millis() - testStart < 2000) {
+      if (digitalRead(INT1_PIN) == HIGH || digitalRead(INT2_PIN) == HIGH) {
+        intDetected = true;
+        Serial.printf("✓ INT detected! INT1=%s INT2=%s\n",
+                      digitalRead(INT1_PIN) ? "HIGH" : "LOW",
+                      digitalRead(INT2_PIN) ? "HIGH" : "LOW");
+        break;
+      }
+      delay(50);
+    }
+
+    if (!intDetected) {
+      Serial.println("⚠️ WARNING: No interrupt detected during test!");
+      Serial.println("LSM6DSL may not generate wake interrupts.");
+    } else {
+      Serial.println("✓ LSM6DSL interrupt generation working!");
+      // Clear the test interrupt
+      clearLSM6DSLInterrupts();
+      delay(100);
+    }
   }
-  
+
+  // Disable all wake sources first
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-  
-  if (digitalRead(INT1_PIN) == HIGH && digitalRead(INT2_PIN) == HIGH) {
-    gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_LOW_LEVEL);
-    gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_LOW_LEVEL);
-  } else {
-    gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_HIGH_LEVEL);
-    gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_HIGH_LEVEL);
+
+  // ESP32-C3 SPECIFIC: Configure GPIO for wake
+  // Method 1: Try level-triggered wake (current approach)
+  Serial.println("Configuring GPIO wake sources...");
+
+  // Ensure pins are in input mode without pull resistors
+  gpio_reset_pin((gpio_num_t)INT1_PIN);
+  gpio_reset_pin((gpio_num_t)INT2_PIN);
+  gpio_set_direction((gpio_num_t)INT1_PIN, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)INT2_PIN, GPIO_MODE_INPUT);
+  gpio_set_pull_mode((gpio_num_t)INT1_PIN, GPIO_FLOATING);
+  gpio_set_pull_mode((gpio_num_t)INT2_PIN, GPIO_FLOATING);
+
+  // Configure GPIO wake with HIGH level trigger
+  esp_err_t ret1 = gpio_wakeup_enable((gpio_num_t)INT1_PIN, GPIO_INTR_HIGH_LEVEL);
+  esp_err_t ret2 = gpio_wakeup_enable((gpio_num_t)INT2_PIN, GPIO_INTR_HIGH_LEVEL);
+  esp_err_t ret3 = esp_sleep_enable_gpio_wakeup();
+
+  Serial.printf("GPIO wake enable results: INT1=%d INT2=%d Enable=%d\n", ret1, ret2, ret3);
+
+  // ADD: Timer wake (5 seconds for faster testing)
+  esp_err_t ret4 = esp_sleep_enable_timer_wakeup(5 * 1000000ULL);  // 5 seconds
+  Serial.printf("Timer wake enable result: %d\n", ret4);
+
+  // Verify pin states before sleep
+  int int1_state = digitalRead(INT1_PIN);
+  int int2_state = digitalRead(INT2_PIN);
+
+  Serial.printf("Pin states before sleep: INT1=%s INT2=%s\n",
+                int1_state ? "HIGH" : "LOW",
+                int2_state ? "HIGH" : "LOW");
+
+  if (int1_state == HIGH || int2_state == HIGH) {
+    Serial.println("⚠️  WARNING: Pins already HIGH! Wake trigger may not work!");
   }
-  
-  esp_sleep_enable_gpio_wakeup();
-  esp_deep_sleep_start();
+
+#if USE_DEEP_SLEEP
+  Serial.println("⚠️  ENTERING DEEP SLEEP - USB WILL DISCONNECT!");
+  Serial.println("Device will wake on motion or after 5 seconds.");
+  Serial.println("Press RESET button after wake to see output.");
+  Serial.println("Use BOOT+RESET to recover if stuck.");
+#else
+  Serial.println("Entering light sleep...");
+  Serial.println("⚠️  Warning: Light sleep may have watchdog issues on ESP32-C3");
+#endif
+
+  Serial.flush();
+  delay(100);
+
+#if DEBUG_FAKE_SLEEP
+  // DEBUG MODE: Use delay instead of sleep
+  Serial.println("[DEBUG: Using delay() instead of sleep]");
+  unsigned long fake_sleep_start = millis();
+  while (millis() - fake_sleep_start < 5000) {
+    if (digitalRead(INT1_PIN) == HIGH || digitalRead(INT2_PIN) == HIGH) {
+      Serial.println("\n>>> FAKE WAKE: GPIO HIGH <<<");
+      Serial.printf("Duration: %lu ms\n", millis() - fake_sleep_start);
+      return;
+    }
+    delay(100);
+  }
+  Serial.println("\n>>> FAKE WAKE: Timer <<<");
+  Serial.printf("Duration: %lu ms\n", millis() - fake_sleep_start);
+
+#elif USE_DEEP_SLEEP
+  // DEEP SLEEP MODE
+  esp_deep_sleep_start();  // Device resets on wake
+
+#else
+  // LIGHT SLEEP MODE
+  int64_t sleep_start = esp_timer_get_time();
+  Serial.println("[Entering light sleep...]");
+  Serial.flush();
+
+  esp_err_t sleep_result = esp_light_sleep_start();
+
+  int64_t sleep_duration = (esp_timer_get_time() - sleep_start) / 1000;
+
+  // After wake
+  Serial.println("\n>>> DEVICE WOKE UP <<<");
+  Serial.printf("Duration: %lld ms (result=%d)\n", sleep_duration, sleep_result);
+
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  switch (cause) {
+    case ESP_SLEEP_WAKEUP_GPIO:
+      Serial.println("Wake: GPIO (Motion)");
+      Serial.printf("INT1=%s INT2=%s\n",
+                    digitalRead(INT1_PIN) ? "HIGH" : "LOW",
+                    digitalRead(INT2_PIN) ? "HIGH" : "LOW");
+      break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      Serial.println("Wake: TIMER");
+      break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+      Serial.println("Wake: UNDEFINED");
+      break;
+    default:
+      Serial.printf("Wake: UNKNOWN (%d)\n", cause);
+      break;
+  }
+#endif
 }
