@@ -12,8 +12,8 @@
 #include <HardwareSerial.h>
 
 // Pin definitions for UART communication
-#define SIM_TX_PIN 21
-#define SIM_RX_PIN 20
+#define SIM_TX_PIN 4
+#define SIM_RX_PIN 5
 
 // Timeout values
 #define DEFAULT_TIMEOUT 2000
