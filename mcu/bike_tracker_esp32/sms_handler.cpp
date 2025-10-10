@@ -1,12 +1,17 @@
 /*
  * sms_handler.cpp
- * 
+ *
  * Implementation of SMS sending functionality for SIM7070G module
  */
 
 #include "sms_handler.h"
 #include "sim7070g.h"
 #include <Preferences.h>
+
+// Constants
+static const uint16_t SMS_MAX_LENGTH = 160;  // Standard SMS character limit
+static const uint16_t SMS_TIMEOUT_MS = 10000;
+static const uint16_t SMS_PROMPT_TIMEOUT_MS = 2000;
 
 // Track last SMS time
 static unsigned long lastSMSTime = 0;
@@ -41,16 +46,16 @@ bool sendSMS(const String& phoneNumber, const String& message) {
   
   // Wait for prompt
   uint32_t start = millis();
-  while (millis() - start < 2000) {
+  while (millis() - start < SMS_PROMPT_TIMEOUT_MS) {
     if (simSerial.available() && simSerial.read() == '>') {
       // Send message
       simSerial.print(message);
       simSerial.write(26);  // Ctrl+Z
-      
+
       // Wait for confirmation
       String response = "";
       start = millis();
-      while (millis() - start < 10000) {
+      while (millis() - start < SMS_TIMEOUT_MS) {
         if (simSerial.available()) {
           response += (char)simSerial.read();
           if (response.indexOf("+CMGS:") != -1) {
@@ -359,8 +364,8 @@ bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCach
   delay(1000);
 
   // Use char buffer to avoid String heap fragmentation
-  // Keep message under 160 chars to fit in single SMS
-  static char message[160];
+  // Keep message under SMS_MAX_LENGTH to fit in single SMS
+  static char message[SMS_MAX_LENGTH];
   int offset = 0;
 
   if (hasCachedGPS && cachedGPS.valid) {
@@ -419,118 +424,24 @@ bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCach
  * Send test SMS to verify functionality
  */
 bool sendTestSMS(const String& phoneNumber) {
-  String message = "Bike Tracker Test SMS\n";
-  message += "System operational\n";
-  message += "Time: ";
-  message += String(millis() / 1000);
-  message += " seconds since boot";
-  
+  // Use char buffer to avoid heap fragmentation
+  static char message[SMS_MAX_LENGTH];
+  snprintf(message, sizeof(message),
+           "Bike Tracker Test SMS\n"
+           "System operational\n"
+           "Time: %lu seconds since boot",
+           millis() / 1000);
+
   // Enable RF for SMS
   enableRF();
   delay(1000);
-  
-  bool result = sendSMS(phoneNumber, message);
-  
+
+  bool result = sendSMS(phoneNumber, String(message));
+
   // Disable RF after SMS to save power
   disableRF();
-  
+
   return result;
-}
-
-/*
- * Format alert message based on alert type
- */
-String formatAlertMessage(const GPSData& gpsData, AlertType type) {
-  String message = "";
-  
-  // CRITICAL: geo URI must be on the first line for proper recognition
-  message += "geo:";
-  message += gpsData.latitude;
-  message += ",";
-  message += gpsData.longitude;
-  message += "\n\n";
-  
-  // Add alert header based on type
-  switch (type) {
-    case ALERT_LOCATION_UPDATE:
-      message += "Location Update\n";
-      break;
-      
-    case ALERT_LOW_BATTERY:
-      message += "Low Battery Alert\n";
-      break;
-      
-    case ALERT_TEST:
-      message += "Test Alert\n";
-      break;
-      
-    case ALERT_BLE_DISCONNECT:
-      message += "BLE Disconnected Alert\n";
-      break;
-      
-    default:
-      message += "Location Alert\n";
-      break;
-  }
-  
-  message += "\n";
-  
-  // Add coordinates for manual entry if needed
-  message += "Coordinates:\n";
-  message += "Lat: ";
-  message += gpsData.latitude;
-  message += "\n";
-  message += "Lon: ";
-  message += gpsData.longitude;
-  message += "\n";
-  
-  // Always add speed (show 0 or N/A if unavailable)
-  message += "Speed: ";
-  if (gpsData.speed.length() > 0) {
-    float speedKmh = gpsData.speed.toFloat();
-    message += String(speedKmh, 1);
-    message += " km/h";
-  } else {
-    message += "N/A";
-  }
-  
-  return message;
-}
-
-/*
- * Format simple location message (coordinates only)
- */
-String formatSimpleLocationMessage(const GPSData& gpsData) {
-  String message = "";
-  
-  // CRITICAL: geo URI must be on the first line for proper recognition
-  message += "geo:";
-  message += gpsData.latitude;
-  message += ",";
-  message += gpsData.longitude;
-  message += "\n\n";
-  
-  message += "Bike Location\n\n";
-  
-  message += "Coordinates:\n";
-  message += "Lat: ";
-  message += gpsData.latitude;
-  message += "\n";
-  message += "Lon: ";
-  message += gpsData.longitude;
-  message += "\n";
-  
-  // Always add speed (show 0 or N/A if unavailable)
-  message += "Speed: ";
-  if (gpsData.speed.length() > 0) {
-    float speedKmh = gpsData.speed.toFloat();
-    message += String(speedKmh, 1);
-    message += " km/h";
-  } else {
-    message += "N/A";
-  }
-  
-  return message;
 }
 
 /*

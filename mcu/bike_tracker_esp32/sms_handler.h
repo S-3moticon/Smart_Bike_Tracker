@@ -1,6 +1,6 @@
 /*
  * sms_handler.h
- * 
+ *
  * SMS sending functionality for SIM7070G module
  */
 
@@ -9,10 +9,6 @@
 
 #include <Arduino.h>
 #include "gps_handler.h"
-
-// SMS configuration
-#define MAX_SMS_RETRIES 2  // Reduced retries to save power
-#define SMS_RETRY_DELAY 3000  // Reduced delay between retries
 
 // SMS alert types
 enum AlertType {
@@ -29,10 +25,6 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
 bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool userPresent, uint16_t updateInterval);
 bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCachedGPS, const GPSData& cachedGPS, uint16_t updateInterval);
 bool sendTestSMS(const String& phoneNumber);
-
-// SMS message formatting
-String formatAlertMessage(const GPSData& gpsData, AlertType type);
-String formatSimpleLocationMessage(const GPSData& gpsData);
 
 // SMS tracking
 void updateLastSMSTime();
