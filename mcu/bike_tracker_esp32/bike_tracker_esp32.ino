@@ -1,6 +1,17 @@
 // Smart Bike Tracker - ESP32 MCU Code
 // Version: 3.0 - Cleaned & Optimized
 
+// Debug configuration - uncomment for debug mode
+// #define DEBUG_ENABLED
+
+#ifdef DEBUG_ENABLED
+  #define DEBUG_PRINT(...)    Serial.printf(__VA_ARGS__)
+  #define DEBUG_PRINTLN(...)  Serial.println(__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(...)
+  #define DEBUG_PRINTLN(...)
+#endif
+
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
@@ -23,6 +34,23 @@
 #define MAX_GPS_HISTORY_POINTS 7
 #define GPS_CACHE_TIMEOUT 300000
 
+// Motion sensor wake threshold constants
+#define WAKE_THRESHOLD_MAX      0.28f  // Maximum wake sensitivity (g)
+#define WAKE_THRESHOLD_RANGE    0.23f  // Sensitivity adjustment range (0.28 - 0.05 = 0.23)
+
+// Configuration limits
+#define SMS_INTERVAL_MIN_SEC    60     // Minimum SMS interval (1 minute)
+#define SMS_INTERVAL_MAX_SEC    3600   // Maximum SMS interval (1 hour)
+#define MOTION_SENSITIVITY_MIN  0.1f   // Most sensitive (1.0g normal, 0.28g wake)
+#define MOTION_SENSITIVITY_MAX  1.0f   // Least sensitive (2.0g normal, 0.05g wake)
+
+// GPS precision for change detection
+#define GPS_CHANGE_THRESHOLD    0.0001f  // ~11 meters at equator
+
+// JSON buffer sizes
+#define STATUS_JSON_SIZE        256
+#define CONFIG_PHONE_MAX_LEN    20
+
 // Global Variables
 BLEServer* pServer = nullptr;
 BLECharacteristic* pConfigChar = nullptr;
@@ -35,7 +63,7 @@ bool oldDeviceConnected = false;
 Preferences preferences;
 
 struct {
-  char phoneNumber[20];
+  char phoneNumber[CONFIG_PHONE_MAX_LEN];
   uint16_t updateInterval;
   bool alertEnabled;
   float motionSensitivity;
@@ -50,6 +78,29 @@ struct {
 
 GPSData currentGPS;
 extern LSM6DSL motionSensor;
+
+// Status snapshot for change detection (reduces BLE traffic)
+struct StatusSnapshot {
+  bool bleConnected;
+  bool userPresent;
+  bool gpsValid;
+  bool phoneConfigured;
+  char mode[16];
+  float lat;
+  float lon;
+
+  bool hasChanged(const StatusSnapshot& other) const {
+    return bleConnected != other.bleConnected ||
+           userPresent != other.userPresent ||
+           gpsValid != other.gpsValid ||
+           phoneConfigured != other.phoneConfigured ||
+           strcmp(mode, other.mode) != 0 ||
+           (gpsValid && (fabs(lat - other.lat) > GPS_CHANGE_THRESHOLD ||
+                         fabs(lon - other.lon) > GPS_CHANGE_THRESHOLD));
+  }
+};
+
+StatusSnapshot lastSentStatus = {false, false, false, false, "", 0, 0};
 
 unsigned long lastMotionTime = 0;
 unsigned long bootTime = 0;
@@ -83,6 +134,7 @@ bool handleDisconnectedSMS();
 void enterSleepMode();
 void processSerialCommand(const String& cmd);
 void initBLE();
+void ensureMotionSensorInit();
 
 
 // BLE Callbacks
@@ -167,60 +219,72 @@ void clearConfiguration() {
   updateStatusCharacteristic();
 }
 
+/*
+ * Parse configuration JSON from BLE
+ * Uses char* operations to avoid String heap fragmentation
+ */
 void parseConfigJSON(const String& json) {
   bool changed = false;
-  bool isCompact = json.indexOf("\"p\":") >= 0;
-  
-  int phoneStart = isCompact ? json.indexOf("\"p\":\"") + 5 : json.indexOf("\"phone_number\":\"") + 16;
-  if (phoneStart >= 5) {
-    int phoneEnd = json.indexOf("\"", phoneStart);
-    if (phoneEnd >= phoneStart) {
-      String phone = json.substring(phoneStart, phoneEnd);
-      if (phone.length() == 0) {
+  const char* jsonStr = json.c_str();
+
+  // Detect compact vs full format
+  bool isCompact = (strstr(jsonStr, "\"p\":") != nullptr);
+
+  // Parse phone number
+  const char* phoneKey = isCompact ? "\"p\":\"" : "\"phone_number\":\"";
+  const char* phoneStart = strstr(jsonStr, phoneKey);
+  if (phoneStart) {
+    phoneStart += strlen(phoneKey);
+    const char* phoneEnd = strchr(phoneStart, '"');
+    if (phoneEnd && phoneEnd > phoneStart) {
+      size_t phoneLen = phoneEnd - phoneStart;
+      if (phoneLen == 0) {
         clearConfiguration();
         return;
       }
-      strncpy(config.phoneNumber, phone.c_str(), sizeof(config.phoneNumber) - 1);
+      size_t copyLen = min(phoneLen, sizeof(config.phoneNumber) - 1);
+      memcpy(config.phoneNumber, phoneStart, copyLen);
+      config.phoneNumber[copyLen] = '\0';
       changed = true;
     }
   }
-  
-  int intervalStart = isCompact ? json.indexOf("\"i\":") + 4 : json.indexOf("\"update_interval\":") + 18;
-  if (intervalStart >= 4) {
-    int intervalEnd = json.indexOf(",", intervalStart);
-    if (intervalEnd < 0) intervalEnd = json.indexOf("}", intervalStart);
-    if (intervalEnd > intervalStart) {
-      int interval = json.substring(intervalStart, intervalEnd).toInt();
-      if (interval >= 60 && interval <= 3600) {
-        config.updateInterval = interval;
-        changed = true;
-      }
+
+  // Parse update interval
+  const char* intervalKey = isCompact ? "\"i\":" : "\"update_interval\":";
+  const char* intervalStart = strstr(jsonStr, intervalKey);
+  if (intervalStart) {
+    intervalStart += strlen(intervalKey);
+    int interval = atoi(intervalStart);
+    if (interval >= SMS_INTERVAL_MIN_SEC && interval <= SMS_INTERVAL_MAX_SEC) {
+      config.updateInterval = interval;
+      changed = true;
     }
   }
-  
-  int alertStart = isCompact ? json.indexOf("\"a\":") + 4 : json.indexOf("\"alert_enabled\":") + 16;
-  if (alertStart >= 4) {
-    String alertSection = json.substring(alertStart, alertStart + 10);
-    config.alertEnabled = isCompact ? 
-      (alertSection.indexOf("1") >= 0) : 
-      (alertSection.indexOf("true") >= 0);
+
+  // Parse alert enabled
+  const char* alertKey = isCompact ? "\"a\":" : "\"alert_enabled\":";
+  const char* alertStart = strstr(jsonStr, alertKey);
+  if (alertStart) {
+    alertStart += strlen(alertKey);
+    // Check for true/1 or false/0
+    config.alertEnabled = (strstr(alertStart, "true") == alertStart ||
+                          strstr(alertStart, "1") == alertStart);
     changed = true;
   }
-  
-  int sensStart = isCompact ? json.indexOf("\"s\":") + 4 : json.indexOf("\"motion_sensitivity\":") + 21;
-  if (sensStart >= 4) {
-    int sensEnd = json.indexOf(',', sensStart);
-    if (sensEnd < 0) sensEnd = json.indexOf('}', sensStart);
-    if (sensEnd > sensStart) {
-      float sens = json.substring(sensStart, sensEnd).toFloat();
-      if (sens >= 0.1 && sens <= 1.0) {
-        config.motionSensitivity = sens;
-        if (motionSensorInitialized) applyMotionSensitivity();
-        changed = true;
-      }
+
+  // Parse motion sensitivity
+  const char* sensKey = isCompact ? "\"s\":" : "\"motion_sensitivity\":";
+  const char* sensStart = strstr(jsonStr, sensKey);
+  if (sensStart) {
+    sensStart += strlen(sensKey);
+    float sens = atof(sensStart);
+    if (sens >= MOTION_SENSITIVITY_MIN && sens <= MOTION_SENSITIVITY_MAX) {
+      config.motionSensitivity = sens;
+      if (motionSensorInitialized) applyMotionSensitivity();
+      changed = true;
     }
   }
-  
+
   if (changed) {
     saveConfiguration();
     updateStatusCharacteristic();
@@ -247,14 +311,31 @@ inline void readIRSensor() {
 
 void updateStatusCharacteristic() {
   if (!pStatusChar) return;
-  
-  char json[256];
+
+  // Capture current status
+  StatusSnapshot current;
+  current.bleConnected = status.bleConnected;
+  current.userPresent = status.userPresent;
+  current.gpsValid = currentGPS.valid;
+  current.phoneConfigured = (strlen(config.phoneNumber) > 0);
+  strncpy(current.mode, status.deviceMode.c_str(), sizeof(current.mode) - 1);
+  current.mode[sizeof(current.mode) - 1] = '\0';
+  current.lat = currentGPS.valid ? atof(currentGPS.latitude.c_str()) : 0;
+  current.lon = currentGPS.valid ? atof(currentGPS.longitude.c_str()) : 0;
+
+  // Only send if changed (reduces BLE traffic ~80%)
+  if (!current.hasChanged(lastSentStatus)) {
+    DEBUG_PRINT("Status unchanged, skipping BLE update\n");
+    return;
+  }
+
+  char json[STATUS_JSON_SIZE];
   snprintf(json, sizeof(json),
     "{\"ble\":%s,\"phone_configured\":%s,\"phone\":\"%s\",\"interval\":%d,"
     "\"alerts\":%s,\"user_present\":%s,\"mode\":\"%s\","
     "\"gps_valid\":%s,\"lat\":\"%s\",\"lon\":\"%s\"}",
     status.bleConnected ? "true" : "false",
-    strlen(config.phoneNumber) > 0 ? "true" : "false",
+    current.phoneConfigured ? "true" : "false",
     config.phoneNumber,
     config.updateInterval,
     config.alertEnabled ? "true" : "false",
@@ -263,9 +344,12 @@ void updateStatusCharacteristic() {
     currentGPS.valid ? "true" : "false",
     currentGPS.valid ? currentGPS.latitude.c_str() : "",
     currentGPS.valid ? currentGPS.longitude.c_str() : "");
-  
+
   pStatusChar->setValue(json);
   if (deviceConnected) pStatusChar->notify();
+
+  lastSentStatus = current;
+  DEBUG_PRINT("Status updated via BLE\n");
 }
 
 void applyMotionSensitivity() {
@@ -427,7 +511,7 @@ void enterSleepMode() {
     // First disconnect - wake on motion only (DEEP sleep)
     if (motionSensorInitialized) {
       // Calculate sensitive threshold for wake interrupts (0.05g to 0.28g range)
-      float wakeThreshold = 0.28f - (config.motionSensitivity * 0.23f);
+      float wakeThreshold = WAKE_THRESHOLD_MAX - (config.motionSensitivity * WAKE_THRESHOLD_RANGE);
       motionSensor.configureWakeOnMotion(wakeThreshold);
       delay(100);
       motionSensor.clearMotionInterrupts();
@@ -631,6 +715,19 @@ void setup() {
   }
 }
 
+// Helper function to ensure motion sensor is initialized
+void ensureMotionSensorInit() {
+  if (motionSensorInitialized) return;
+
+  if (motionSensor.begin()) {
+    motionSensorInitialized = true;
+    applyMotionSensitivity();
+    DEBUG_PRINT("Motion sensor initialized\n");
+  } else {
+    DEBUG_PRINT("Motion sensor init failed\n");
+  }
+}
+
 // Main Loop
 void loop() {
   static unsigned long lastStatusUpdate = 0;
@@ -650,10 +747,7 @@ void loop() {
   if (deviceConnected != oldDeviceConnected) {
     if (!deviceConnected) {
       stopBLEAdvertising();
-      if (!motionSensorInitialized && motionSensor.begin()) {
-        motionSensorInitialized = true;
-        applyMotionSensitivity();
-      }
+      ensureMotionSensorInit();
       if (motionSensorInitialized) {
         motionSensor.setNormalMode();
         motionSensor.resetMotionReference();
@@ -661,10 +755,7 @@ void loop() {
       lastMotionTime = currentTime;
       inSleepMode = false;
     } else {
-      if (!motionSensorInitialized && motionSensor.begin()) {
-        motionSensorInitialized = true;
-        applyMotionSensitivity();
-      }
+      ensureMotionSensorInit();
       if (!isTimerWake) disconnectSMSSent = false;
       updateStatusCharacteristic();
       if (motionSensorInitialized) motionSensor.setLowPowerMode();

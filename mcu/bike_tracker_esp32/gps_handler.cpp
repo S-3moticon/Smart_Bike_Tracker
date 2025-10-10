@@ -361,29 +361,30 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
   
   // Use the timestamp from GPSData if available
   gpsLogPrefs.begin(GPS_LOG_NAMESPACE, false);
-  
-  // Create key for this entry
-  String keyLat = "lat_" + String(logIndex);
-  String keyLon = "lon_" + String(logIndex);
-  String keySpeed = "spd_" + String(logIndex);
-  String keyTime = "time_" + String(logIndex);
-  String keySrc = "src_" + String(logIndex);
-  
+
+  // Create keys for this entry (use char buffers to avoid String heap fragmentation)
+  char keyLat[12], keyLon[12], keySpeed[12], keySrc[12];
+  char keyTimeHi[14], keyTimeLo[14];
+  snprintf(keyLat, sizeof(keyLat), "lat_%d", logIndex);
+  snprintf(keyLon, sizeof(keyLon), "lon_%d", logIndex);
+  snprintf(keySpeed, sizeof(keySpeed), "spd_%d", logIndex);
+  snprintf(keySrc, sizeof(keySrc), "src_%d", logIndex);
+  snprintf(keyTimeHi, sizeof(keyTimeHi), "timeH_%d", logIndex);
+  snprintf(keyTimeLo, sizeof(keyTimeLo), "timeL_%d", logIndex);
+
   // Store the GPS point with proper timestamp
-  gpsLogPrefs.putFloat(keyLat.c_str(), lat);
-  gpsLogPrefs.putFloat(keyLon.c_str(), lon);
-  
+  gpsLogPrefs.putFloat(keyLat, lat);
+  gpsLogPrefs.putFloat(keyLon, lon);
+
   // Store speed (convert string to float)
   float speed = data.speed.toFloat();
-  gpsLogPrefs.putFloat(keySpeed.c_str(), speed);
-  Serial.printf("📍 Storing GPS from data: index=%d, lat=%.7f, lon=%.7f, speed=%.2fkm/h, src=%d\n", 
+  gpsLogPrefs.putFloat(keySpeed, speed);
+  Serial.printf("📍 Storing GPS from data: index=%d, lat=%.7f, lon=%.7f, speed=%.2fkm/h, src=%d\n",
                 logIndex, lat, lon, speed, source);
   // Store 64-bit timestamp as two 32-bit values
-  String keyTimeHi = "timeH_" + String(logIndex);
-  String keyTimeLo = "timeL_" + String(logIndex);
-  gpsLogPrefs.putULong(keyTimeHi.c_str(), (uint32_t)(data.timestamp >> 32));
-  gpsLogPrefs.putULong(keyTimeLo.c_str(), (uint32_t)(data.timestamp & 0xFFFFFFFF));
-  gpsLogPrefs.putUChar(keySrc.c_str(), source);
+  gpsLogPrefs.putULong(keyTimeHi, (uint32_t)(data.timestamp >> 32));
+  gpsLogPrefs.putULong(keyTimeLo, (uint32_t)(data.timestamp & 0xFFFFFFFF));
+  gpsLogPrefs.putUChar(keySrc, source);
   
   // Update index (circular buffer)
   logIndex = (logIndex + 1) % MAX_GPS_HISTORY;
@@ -408,22 +409,25 @@ bool logGPSPoint(const GPSData& data, uint8_t source) {
  */
 bool logGPSPoint(float lat, float lon, uint8_t source) {
   gpsLogPrefs.begin(GPS_LOG_NAMESPACE, false);
-  
-  // Create key for this entry
-  String keyLat = "lat_" + String(logIndex);
-  String keyLon = "lon_" + String(logIndex);
-  String keySpeed = "spd_" + String(logIndex);
-  String keyTime = "time_" + String(logIndex);
-  String keySrc = "src_" + String(logIndex);
-  
+
+  // Create keys for this entry (use char buffers to avoid String heap fragmentation)
+  char keyLat[12], keyLon[12], keySpeed[12], keySrc[12];
+  char keyTimeHi[14], keyTimeLo[14];
+  snprintf(keyLat, sizeof(keyLat), "lat_%d", logIndex);
+  snprintf(keyLon, sizeof(keyLon), "lon_%d", logIndex);
+  snprintf(keySpeed, sizeof(keySpeed), "spd_%d", logIndex);
+  snprintf(keySrc, sizeof(keySrc), "src_%d", logIndex);
+  snprintf(keyTimeHi, sizeof(keyTimeHi), "timeH_%d", logIndex);
+  snprintf(keyTimeLo, sizeof(keyTimeLo), "timeL_%d", logIndex);
+
   // Store the GPS point
-  gpsLogPrefs.putFloat(keyLat.c_str(), lat);
-  gpsLogPrefs.putFloat(keyLon.c_str(), lon);
-  gpsLogPrefs.putFloat(keySpeed.c_str(), 0.0);  // Default speed for phone GPS
-  
+  gpsLogPrefs.putFloat(keyLat, lat);
+  gpsLogPrefs.putFloat(keyLon, lon);
+  gpsLogPrefs.putFloat(keySpeed, 0.0);  // Default speed for phone GPS
+
   Serial.printf("📍 Storing GPS (no speed): index=%d, lat=%.7f, lon=%.7f, src=%d\n",
                 logIndex, lat, lon, source);
-  
+
   // For phone GPS (source 0), use an estimated Unix timestamp
   uint64_t timestamp;
   if (source == 0) {
@@ -440,13 +444,11 @@ bool logGPSPoint(float lat, float lon, uint8_t source) {
       timestamp = 1735689600000ULL + millis(); // Dec 31, 2024 baseline
     }
   }
-  
+
   // Store 64-bit timestamp as two 32-bit values
-  String keyTimeHi = "timeH_" + String(logIndex);
-  String keyTimeLo = "timeL_" + String(logIndex);
-  gpsLogPrefs.putULong(keyTimeHi.c_str(), (uint32_t)(timestamp >> 32));
-  gpsLogPrefs.putULong(keyTimeLo.c_str(), (uint32_t)(timestamp & 0xFFFFFFFF));
-  gpsLogPrefs.putUChar(keySrc.c_str(), source);
+  gpsLogPrefs.putULong(keyTimeHi, (uint32_t)(timestamp >> 32));
+  gpsLogPrefs.putULong(keyTimeLo, (uint32_t)(timestamp & 0xFFFFFFFF));
+  gpsLogPrefs.putUChar(keySrc, source);
   
   // Update index (circular buffer)
   logIndex = (logIndex + 1) % MAX_GPS_HISTORY;
@@ -493,48 +495,42 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
     actualIndex = (logIndex - logCount + index + MAX_GPS_HISTORY) % MAX_GPS_HISTORY;
   }
   
+  // Create keys for this entry (use char buffers to avoid String heap fragmentation)
+  char keyLat[12], keyLon[12], keySpeed[12], keySrc[12];
+  char keyTimeHi[14], keyTimeLo[14];
+  snprintf(keyLat, sizeof(keyLat), "lat_%d", actualIndex);
+  snprintf(keyLon, sizeof(keyLon), "lon_%d", actualIndex);
+  snprintf(keySpeed, sizeof(keySpeed), "spd_%d", actualIndex);
+  snprintf(keySrc, sizeof(keySrc), "src_%d", actualIndex);
+  snprintf(keyTimeHi, sizeof(keyTimeHi), "timeH_%d", actualIndex);
+  snprintf(keyTimeLo, sizeof(keyTimeLo), "timeL_%d", actualIndex);
+
   // Read the entry
-  String keyLat = "lat_" + String(actualIndex);
-  String keyLon = "lon_" + String(actualIndex);
-  String keySpeed = "spd_" + String(actualIndex);
-  String keyTimeHi = "timeH_" + String(actualIndex);
-  String keyTimeLo = "timeL_" + String(actualIndex);
-  String keySrc = "src_" + String(actualIndex);
-  
-  entry.lat = gpsLogPrefs.getFloat(keyLat.c_str(), 0);
-  entry.lon = gpsLogPrefs.getFloat(keyLon.c_str(), 0);
-  entry.speed = gpsLogPrefs.getFloat(keySpeed.c_str(), 0);
-  
+  entry.lat = gpsLogPrefs.getFloat(keyLat, 0);
+  entry.lon = gpsLogPrefs.getFloat(keyLon, 0);
+  entry.speed = gpsLogPrefs.getFloat(keySpeed, 0);
+
   // Debug logging
-  Serial.print("     Reading index ");
-  Serial.print(index);
-  Serial.print(" -> actual ");
-  Serial.print(actualIndex);
-  Serial.print(": ");
-  Serial.print(keyLat);
-  Serial.print("=");
-  Serial.print(entry.lat, 7);
-  Serial.print(", ");
-  Serial.print(keyLon);
-  Serial.print("=");
-  Serial.println(entry.lon, 7);
-  
+  Serial.printf("     Reading index %d -> actual %d: %s=%.7f, %s=%.7f\n",
+                index, actualIndex, keyLat, entry.lat, keyLon, entry.lon);
+
   // Read 64-bit timestamp from two 32-bit values
-  uint32_t timestamp_hi = gpsLogPrefs.getULong(keyTimeHi.c_str(), 0);
-  uint32_t timestamp_lo = gpsLogPrefs.getULong(keyTimeLo.c_str(), 0);
+  uint32_t timestamp_hi = gpsLogPrefs.getULong(keyTimeHi, 0);
+  uint32_t timestamp_lo = gpsLogPrefs.getULong(keyTimeLo, 0);
   entry.timestamp = ((uint64_t)timestamp_hi << 32) | timestamp_lo;
-  
+
   // Fallback for old format (if timestamp_hi is 0, try old single value)
   if (timestamp_hi == 0) {
-    String keyTime = "time_" + String(actualIndex);
-    entry.timestamp = gpsLogPrefs.getULong(keyTime.c_str(), 0);
+    char keyTime[12];
+    snprintf(keyTime, sizeof(keyTime), "time_%d", actualIndex);
+    entry.timestamp = gpsLogPrefs.getULong(keyTime, 0);
     // If old value looks like millis (small number), add baseline
     if (entry.timestamp < 1000000000000ULL) {
       entry.timestamp = 1735689600000ULL + entry.timestamp; // Dec 31, 2024 baseline
     }
   }
-  
-  entry.source = gpsLogPrefs.getUChar(keySrc.c_str(), 0);
+
+  entry.source = gpsLogPrefs.getUChar(keySrc, 0);
   
   gpsLogPrefs.end();
   
@@ -543,94 +539,94 @@ bool getGPSLogEntry(int index, GPSLogEntry& entry) {
 
 /*
  * Get GPS history as JSON string for BLE transmission
+ * Uses char buffer to avoid String heap fragmentation
  */
 String getGPSHistoryJSON(int maxPoints) {
-  String json;
-  json.reserve(512);  // Pre-allocate for efficiency
-  json = "{\"history\":[";
-  
+  static char json[512];
+  int offset = 0;
+
+  offset += snprintf(json + offset, sizeof(json) - offset, "{\"history\":[");
+
   int count = getGPSHistoryCount();
   int pointsToSend = min(maxPoints, count);
   int startIdx = max(0, count - pointsToSend);
-  
+
   bool first = true;
-  for (int i = startIdx; i < count; i++) {
+  for (int i = startIdx; i < count && offset < (int)sizeof(json) - 100; i++) {
     GPSLogEntry entry;
     if (getGPSLogEntry(i, entry)) {
-      if (!first) json += ",";
+      if (!first) {
+        offset += snprintf(json + offset, sizeof(json) - offset, ",");
+      }
       first = false;
-      
-      json += "{\"lat\":" + String(entry.lat, 6);
-      json += ",\"lon\":" + String(entry.lon, 6);
-      json += ",\"speed\":" + String(entry.speed, 1);
-      json += ",\"time\":" + String(entry.timestamp);
-      json += ",\"src\":" + String(entry.source) + "}";
+
+      offset += snprintf(json + offset, sizeof(json) - offset,
+                        "{\"lat\":%.6f,\"lon\":%.6f,\"speed\":%.1f,\"time\":%llu,\"src\":%d}",
+                        entry.lat, entry.lon, entry.speed, entry.timestamp, entry.source);
     }
   }
-  
-  json += "],\"count\":" + String(count) + "}";
-  return json;
+
+  offset += snprintf(json + offset, sizeof(json) - offset, "],\"count\":%d}", count);
+  return String(json);  // Convert to String only once at the end
 }
 
 /*
  * Get GPS history page as JSON string for pagination
+ * Uses char buffer to avoid String heap fragmentation
  */
 String getGPSHistoryPageJSON(int page, int pointsPerPage) {
-  String json;
-  json.reserve(512);
-  json = "{\"history\":[";
-  
+  static char json[512];
+  int offset = 0;
+
+  offset += snprintf(json + offset, sizeof(json) - offset, "{\"history\":[");
+
   int count = getGPSHistoryCount();
   int totalPages = count > 0 ? (count + pointsPerPage - 1) / pointsPerPage : 0;
   int startIdx = page * pointsPerPage;
   int endIdx = min(startIdx + pointsPerPage, count);
-  
+
   // Check if page is valid
   if (page < 0 || page >= totalPages || count == 0) {
-    json += "],\"page\":" + String(page) + ",";
-    json += "\"totalPages\":" + String(totalPages) + ",";
-    json += "\"totalPoints\":" + String(count) + ",";
-    json += "\"pointsPerPage\":" + String(pointsPerPage) + "}";
-    return json;
+    offset += snprintf(json + offset, sizeof(json) - offset,
+                      "],\"page\":%d,\"totalPages\":%d,\"totalPoints\":%d,\"pointsPerPage\":%d}",
+                      page, totalPages, count, pointsPerPage);
+    return String(json);
   }
-  
+
   bool firstEntry = true;
   int validPoints = 0;
-  for (int i = startIdx; i < endIdx; i++) {
+  for (int i = startIdx; i < endIdx && offset < (int)sizeof(json) - 150; i++) {
     GPSLogEntry entry;
     if (getGPSLogEntry(i, entry)) {
       // Simplified debug log
-      Serial.printf("   Point %d: lat=%.7f, lon=%.7f, src=%d\n", 
+      Serial.printf("   Point %d: lat=%.7f, lon=%.7f, src=%d\n",
                     i, entry.lat, entry.lon, entry.source);
-      
+
       // Only add valid GPS points (not 0,0)
       if (entry.lat != 0.0 || entry.lon != 0.0) {
-        if (!firstEntry) json += ",";
-        
-        json += "{";
-        json += "\"lat\":" + String(entry.lat, 7) + ",";
-        json += "\"lon\":" + String(entry.lon, 7) + ",";
-        json += "\"speed\":" + String(entry.speed, 1) + ",";
-        json += "\"time\":" + String(entry.timestamp) + ",";
-        json += "\"src\":" + String(entry.source);
-        json += "}";
+        if (!firstEntry) {
+          offset += snprintf(json + offset, sizeof(json) - offset, ",");
+        }
+
+        offset += snprintf(json + offset, sizeof(json) - offset,
+                          "{\"lat\":%.7f,\"lon\":%.7f,\"speed\":%.1f,\"time\":%llu,\"src\":%d}",
+                          entry.lat, entry.lon, entry.speed, entry.timestamp, entry.source);
         firstEntry = false;
         validPoints++;
       }
     }
   }
-  
+
   Serial.printf("   Added %d valid points to page\n", validPoints);
-  
-  json += "],\"page\":" + String(page);
-  json += ",\"totalPages\":" + String(totalPages);
-  json += ",\"totalPoints\":" + String(count);
-  json += ",\"pointsPerPage\":" + String(pointsPerPage) + "}";
-  
+
+  offset += snprintf(json + offset, sizeof(json) - offset,
+                    "],\"page\":%d,\"totalPages\":%d,\"totalPoints\":%d,\"pointsPerPage\":%d}",
+                    page, totalPages, count, pointsPerPage);
+
   Serial.printf("   JSON response: page=%d, totalPages=%d, totalPoints=%d, validPoints=%d\n",
                 page, totalPages, count, validPoints);
-  
-  return json;
+
+  return String(json);  // Convert to String only once at the end
 }
 
 /*

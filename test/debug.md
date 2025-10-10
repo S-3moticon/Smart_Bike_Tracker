@@ -1,81 +1,58 @@
-19:10:03.978 -> 
-19:10:03.978 -> === ESP32-C3 LSM6DSL Motion System ===
-19:10:03.978 -> 🔌 POWER-ON RESET / FIRST BOOT
-19:10:04.045 -> Found LSM6DSL at 0x6B (ID: 0x6A)
-19:10:04.402 -> LSM6DSL ready - calibrating...
-19:10:04.402 -> Calibrating... Keep device still
-19:10:05.617 -> Calibration complete: X=0.790 Y=-0.187 Z=0.608
-19:10:05.617 -> Motion threshold: 0.050g (HIGH SENSITIVITY)
-19:10:05.617 -> 
-19:10:16.350 -> 
-19:10:16.350 -> === NO CHANGE DETECTED - SLEEP COUNTDOWN ===
-19:10:16.350 -> 6...
-19:10:16.452 -> 5...
-19:10:17.434 -> 4...
-19:10:18.350 -> 3...
-19:10:19.333 -> 2...
-19:10:20.333 -> 1...
-19:10:21.333 -> 4294968...
-19:10:21.333 -> 
-19:10:21.333 -> === ENTERING SLEEP ===
-19:10:21.333 -> Total: 0 motions, 0 wakes
-19:10:21.333 -> Phase: First Motion (Light Sleep)
-19:10:21.449 -> Configuring LSM6DSL for wake-on-motion...
-19:10:21.651 -> LSM6DSL config: MD1=0x20 MD2=0x20 CTRL1_XL=0x20
-19:10:21.651 -> Wake-on-motion interrupts configured (52Hz, latched)
-19:10:21.697 -> Cleared wake source: 0x00
-19:10:21.800 -> Waiting for motion detection...
-19:10:21.800 -> (Move device when ready to sleep)
-19:10:28.582 -> ✓ Motion detected! INT1=HIGH INT2=HIGH
-19:10:28.582 -> ✓ LSM6DSL interrupt working!
-19:10:28.583 -> Cleared wake source: 0x0A
-19:10:28.713 -> Configuring GPIO wake sources (ESP32-C3 deep sleep)...
-19:10:28.713 -> Deep sleep GPIO wake configured: result=0
-19:10:28.713 -> GPIO mask: 0x3 (INT1=0, INT2=1)
-19:10:28.713 -> Pin states: INT1=LOW INT2=LOW
-19:10:28.713 -> ⚠️ ENTERING DEEP SLEEP (Phase 1)
-19:10:28.713 -> Will wake ONLY on motion (no timer backup)
-19:10:33.925 -> 
-19:10:33.925 -> === ESP32-C3 LSM6DSL Motion System ===
-19:10:33.925 -> 🔔 WAKE FROM MOTION! (GPIO) Count: 1
-19:10:33.925 ->    INT1: HIGH, INT2: HIGH
-19:10:34.049 -> Found LSM6DSL at 0x6B (ID: 0x6A)
-19:10:34.363 ->    LSM6DSL wake source: 0x00
-19:10:34.363 -> LSM6DSL ready - calibrating...
-19:10:34.363 -> Calibrating... Keep device still
-19:10:35.582 -> Calibration complete: X=0.790 Y=-0.187 Z=0.607
-19:10:35.582 -> Motion threshold: 0.050g (HIGH SENSITIVITY)
-19:10:35.582 -> 
-19:10:40.714 -> 
-19:10:40.714 -> === NO CHANGE DETECTED - SLEEP COUNTDOWN ===
-19:10:40.714 -> 6...
-19:10:40.817 -> 5...
-19:10:41.696 -> 4...
-19:10:42.714 -> 3...
-19:10:43.697 -> 2...
-19:10:44.697 -> 1...
-19:10:45.697 -> 4294968...
-19:10:45.697 -> 
-19:10:45.697 -> === ENTERING SLEEP ===
-19:10:45.697 -> Total: 0 motions, 1 wakes
-19:10:45.697 -> Phase: Periodic (Deep Sleep)
-19:10:45.812 -> First motion already detected - using periodic deep sleep
-19:10:45.812 -> Timer wake enable: 0
-19:10:45.812 -> ⚠️ ENTERING DEEP SLEEP - USB WILL DISCONNECT!
-19:10:45.812 -> Will wake after 10 seconds (periodic check)
-19:10:45.812 -> Press RESET button after wake to see output.
-19:10:56.657 -> 
-19:10:56.657 -> === ESP32-C3 LSM6DSL Motion System ===
-19:10:56.657 -> ⏰ WAKE FROM TIMER! (Periodic) Count: 2
-19:10:56.728 -> Found LSM6DSL at 0x6B (ID: 0x6A)
-19:10:57.079 -> LSM6DSL ready - calibrating...
-19:10:57.079 -> Calibrating... Keep device still
-19:10:58.312 -> Calibration complete: X=0.791 Y=-0.187 Z=0.607
-19:10:58.312 -> Motion threshold: 0.050g (HIGH SENSITIVITY)
-19:10:58.312 -> 
-19:11:00.511 -> 
-19:11:00.511 -> >>> MOTION DETECTED <<<
-19:11:00.511 -> Event #1
-19:11:00.511 -> X=+0.860 Y=-0.128 Z=+0.248 | Change: 0.370g
-19:11:02.711 -> Motion stopped
-19:11:02.711 -> 
+09:15:20.334 ->    Added 1 valid points to page
+09:15:20.334 ->    JSON response: page=0, totalPages=1, totalPoints=1, validPoints=1
+09:15:29.048 -> Motion threshold set to 1.00g (register: 0x20)
+09:15:32.201 -> Motion threshold set to 1.00g (register: 0x20)
+09:15:39.140 -> LSM6DSL set to normal mode
+09:15:39.140 -> Reference reset: X=-0.07, Y=-0.24, Z=0.98
+09:15:39.140 -> Configuring LSM6DSL for wake-on-motion...
+09:15:39.244 -> Cleared interrupts - Wake: 0x00, Status: 0x04
+09:15:39.317 -> Motion threshold set to 0.05g (register: 0x01)
+09:15:39.493 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:15:39.493 -> Wake interrupts configured - MD1: 0x20, MD2: 0x20, CTRL1: 0x20
+09:15:39.620 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:15:39.620 -> Entering deep sleep - wake on motion
+09:15:53.788 -> 
+09:15:53.788 -> 
+09:15:53.788 -> MCU STARTUP
+09:15:53.788 -> Wake: MOTION (GPIO)
+09:15:53.788 -> 📍 GPS History preserved from RTC: index=1, count=1
+09:15:53.828 -> LSM6DSL found at address 0x6B
+09:15:54.149 -> Reference acceleration: X=-0.03, Y=-0.25, Z=0.98
+09:15:54.149 -> Motion threshold set to 1.00g (register: 0x20)
+09:15:54.149 -> 🛰️ Disabling GPS...
+09:15:59.137 -> ❌ Failed to power off GPS
+09:15:59.639 -> 📡 Enabling RF (AT+CFUN=1)...
+09:16:09.637 -> ❌ Failed to enable RF
+09:16:12.133 -> ❌ Module not responding
+09:16:12.133 -> 📡 Disabling RF after SMS...
+09:16:12.133 -> 📡 Disabling RF (AT+CFUN=0)...
+09:16:17.123 -> ❌ Failed to disable RF
+09:16:17.123 -> Configuring LSM6DSL for wake-on-motion...
+09:16:17.173 -> Cleared interrupts - Wake: 0x00, Status: 0x04
+09:16:17.310 -> Motion threshold set to 0.05g (register: 0x01)
+09:16:17.454 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:16:17.454 -> Wake interrupts configured - MD1: 0x20, MD2: 0x20, CTRL1: 0x20
+09:16:17.611 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:16:17.611 -> Entering deep sleep - wake on motion
+09:16:33.594 -> 
+09:16:33.594 -> MCU STARTUP
+09:16:33.594 -> Wake: MOTION (GPIO)
+09:16:33.594 -> 📍 GPS History preserved from RTC: index=1, count=1
+09:16:33.594 -> LSM6DSL found at address 0x6B
+09:16:33.910 -> Reference acceleration: X=0.02, Y=-0.18, Z=0.93
+09:16:33.910 -> Motion threshold set to 1.00g (register: 0x20)
+09:16:33.910 -> 🛰️ Disabling GPS...
+09:16:38.891 -> ❌ Failed to power off GPS
+09:16:39.397 -> 📡 Enabling RF (AT+CFUN=1)...
+09:16:49.389 -> ❌ Failed to enable RF
+09:16:51.888 -> ❌ Module not responding
+09:16:51.888 -> 📡 Disabling RF after SMS...
+09:16:51.888 -> 📡 Disabling RF (AT+CFUN=0)...
+09:16:56.908 -> ❌ Failed to disable RF
+09:16:56.908 -> Configuring LSM6DSL for wake-on-motion...
+09:16:56.908 -> Cleared interrupts - Wake: 0x00, Status: 0x04
+09:16:57.067 -> Motion threshold set to 0.05g (register: 0x01)
+09:16:57.215 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:16:57.215 -> Wake interrupts configured - MD1: 0x20, MD2: 0x20, CTRL1: 0x20
+09:16:57.332 -> Cleared interrupts - Wake: 0x00, Status: 0x05
+09:16:57.332 -> Entering deep sleep - wake on motion
