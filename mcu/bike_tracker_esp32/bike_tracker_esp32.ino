@@ -47,6 +47,17 @@
 // GPS precision for change detection
 #define GPS_CHANGE_THRESHOLD    0.0001f  // ~11 meters at equator
 
+// GPS acquisition constants
+#define GPS_ACQUISITION_ATTEMPTS     30    // Standard GPS fix attempts (~1 minute)
+#define CACHED_GPS_LIMIT              3    // Max consecutive cached GPS sends before no-location alert
+
+// GPS status enumeration (return values from acquireGPSWithFallback)
+enum GPSStatus {
+  GPS_NONE = 0,      // No valid GPS data available
+  GPS_FRESH = 1,     // Fresh GPS fix acquired
+  GPS_CACHED = 2     // Using cached GPS data (< 30 min old)
+};
+
 // JSON buffer sizes
 #define STATUS_JSON_SIZE        256
 #define CONFIG_PHONE_MAX_LEN    20
@@ -388,9 +399,17 @@ void sendGPSHistoryPage(int page) {
 
 /*
  * Acquire GPS with fallback to cached data
- * Returns: 0 = no valid GPS, 1 = fresh GPS acquired, 2 = using cached GPS
+ *
+ * Attempts to acquire fresh GPS fix, falls back to cached data if acquisition fails.
+ * Cached data is only used if less than 30 minutes old (GPS_CACHE_TIMEOUT).
+ *
+ * @param gpsData      Reference to GPSData structure to populate
+ * @param maxAttempts  Maximum number of GPS fix attempts (typically GPS_ACQUISITION_ATTEMPTS=30)
+ * @return GPS_FRESH   Fresh GPS fix successfully acquired
+ *         GPS_CACHED  Using valid cached GPS data (< 30 min old)
+ *         GPS_NONE    No valid GPS data available
  */
-int acquireGPSWithFallback(GPSData& gpsData, uint32_t maxAttempts) {
+GPSStatus acquireGPSWithFallback(GPSData& gpsData, uint32_t maxAttempts) {
   unsigned long currentTime = millis();
 
   // Try to acquire fresh GPS
@@ -403,7 +422,7 @@ int acquireGPSWithFallback(GPSData& gpsData, uint32_t maxAttempts) {
                     (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
       delay(50);  // Allow NVS write to complete
     }
-    return 1;  // Fresh GPS
+    return GPS_FRESH;
   }
 
   // GPS acquisition failed - try to load cached data
@@ -413,14 +432,71 @@ int acquireGPSWithFallback(GPSData& gpsData, uint32_t maxAttempts) {
     // Accept cached GPS if less than 30 minutes old
     if (gpsCacheAge < GPS_CACHE_TIMEOUT) {
       Serial.printf("📍 Using cached GPS (age: %lu seconds)\n", gpsCacheAge / 1000);
-      return 2;  // Cached GPS
+      return GPS_CACHED;
     } else {
       Serial.printf("⚠️ Cached GPS too old (%lu seconds)\n", gpsCacheAge / 1000);
     }
   }
 
   Serial.println("❌ No valid GPS data available");
-  return 0;  // No valid GPS
+  return GPS_NONE;
+}
+
+/*
+ * Send SMS with GPS fallback logic
+ *
+ * Intelligently handles GPS status and sends appropriate SMS:
+ * - GPS_FRESH: Sends location SMS, resets cached counter
+ * - GPS_CACHED: Sends location SMS up to CACHED_GPS_LIMIT times, then switches to no-location alert
+ * - GPS_NONE: Sends no-location alert with last known location if available
+ *
+ * This function manages the consecutiveCachedGPS counter to prevent sending stale
+ * location data indefinitely when GPS module is not functioning.
+ *
+ * @param phoneNumber    Phone number to send SMS to
+ * @param userPresent    Whether IR sensor detects user presence
+ * @param updateInterval SMS update interval in seconds
+ * @param gpsData        GPS data (fresh, cached, or invalid)
+ * @param gpsStatus      GPS acquisition status (GPS_FRESH, GPS_CACHED, or GPS_NONE)
+ * @return true if SMS sent successfully, false otherwise
+ */
+bool sendSMSWithGPSFallback(
+  const char* phoneNumber,
+  bool userPresent,
+  uint16_t updateInterval,
+  GPSData& gpsData,
+  GPSStatus gpsStatus
+) {
+  bool smsSent = false;
+
+  // Check if we've sent cached GPS too many times
+  if (gpsStatus == GPS_CACHED) {
+    consecutiveCachedGPS++;
+    Serial.printf("⚠️ Using cached GPS (%d/%d consecutive)\n",
+                  consecutiveCachedGPS, CACHED_GPS_LIMIT);
+
+    if (consecutiveCachedGPS >= CACHED_GPS_LIMIT) {
+      // Too many cached sends - send no-location alert instead
+      Serial.println("❌ Cached GPS limit reached - sending no-location alert");
+      GPSData cachedGPS = gpsData;  // Keep last cached for reference
+      smsSent = sendNoLocationSMS(phoneNumber, userPresent, true, cachedGPS, updateInterval);
+    } else {
+      // Still within limit - send cached location
+      smsSent = sendDisconnectSMS(phoneNumber, gpsData, userPresent, updateInterval);
+    }
+  } else if (gpsStatus == GPS_FRESH) {
+    // Fresh GPS acquired - reset counter and send location
+    consecutiveCachedGPS = 0;
+    Serial.println("✅ Fresh GPS acquired - counter reset");
+    smsSent = sendDisconnectSMS(phoneNumber, gpsData, userPresent, updateInterval);
+  } else {
+    // No GPS at all - send no-location alert
+    GPSData cachedGPS;
+    bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
+    smsSent = sendNoLocationSMS(phoneNumber, userPresent, hasCached, cachedGPS, updateInterval);
+  }
+
+  return smsSent;
 }
 
 bool handleDisconnectedSMS() {
@@ -435,33 +511,16 @@ bool handleDisconnectedSMS() {
     Serial.println("📱 Motion wake - acquiring GPS for disconnect alert");
 
     // Try to acquire GPS with fallback
-    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+    GPSStatus gpsStatus = acquireGPSWithFallback(currentGPS, GPS_ACQUISITION_ATTEMPTS);
 
-    bool smsSent = false;
-
-    // Check if we've sent cached GPS too many times
-    if (gpsStatus == 2) {  // Cached GPS
-      consecutiveCachedGPS++;
-      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
-
-      if (consecutiveCachedGPS >= 3) {
-        // Too many cached sends - treat as no GPS
-        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
-        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
-        smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, true, cachedGPS, config.updateInterval);
-      } else {
-        // Still within limit - send cached location
-        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-      }
-    } else if (gpsStatus == 1) {  // Fresh GPS
-      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
-      Serial.println("✅ Fresh GPS acquired - counter reset");
-      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-    } else {  // No GPS at all
-      GPSData cachedGPS;
-      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
-      smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
-    }
+    // Send SMS with GPS fallback logic
+    bool smsSent = sendSMSWithGPSFallback(
+      config.phoneNumber,
+      status.userPresent,
+      config.updateInterval,
+      currentGPS,
+      gpsStatus
+    );
 
     if (smsSent) {
       disconnectSMSSent = true;
@@ -483,33 +542,16 @@ bool handleDisconnectedSMS() {
     Serial.println("📱 Periodic update - acquiring GPS");
 
     // Try to acquire GPS with fallback
-    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+    GPSStatus gpsStatus = acquireGPSWithFallback(currentGPS, GPS_ACQUISITION_ATTEMPTS);
 
-    bool smsSent = false;
-
-    // Check if we've sent cached GPS too many times
-    if (gpsStatus == 2) {  // Cached GPS
-      consecutiveCachedGPS++;
-      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
-
-      if (consecutiveCachedGPS >= 3) {
-        // Too many cached sends - treat as no GPS
-        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
-        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
-        smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, true, cachedGPS, config.updateInterval);
-      } else {
-        // Still within limit - send cached location
-        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-      }
-    } else if (gpsStatus == 1) {  // Fresh GPS
-      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
-      Serial.println("✅ Fresh GPS acquired - counter reset");
-      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-    } else {  // No GPS at all
-      GPSData cachedGPS;
-      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
-      smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
-    }
+    // Send SMS with GPS fallback logic
+    bool smsSent = sendSMSWithGPSFallback(
+      config.phoneNumber,
+      status.userPresent,
+      config.updateInterval,
+      currentGPS,
+      gpsStatus
+    );
 
     if (smsSent) {
       disconnectSMSSent = true;
@@ -771,33 +813,16 @@ void setup() {
     }
 
     // Try to acquire GPS with fallback
-    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+    GPSStatus gpsStatus = acquireGPSWithFallback(currentGPS, GPS_ACQUISITION_ATTEMPTS);
 
-    bool smsSent = false;
-
-    // Check if we've sent cached GPS too many times
-    if (gpsStatus == 2) {  // Cached GPS
-      consecutiveCachedGPS++;
-      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
-
-      if (consecutiveCachedGPS >= 3) {
-        // Too many cached sends - treat as no GPS
-        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
-        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
-        smsSent = sendNoLocationSMS(config.phoneNumber, false, true, cachedGPS, config.updateInterval);
-      } else {
-        // Still within limit - send cached location
-        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
-      }
-    } else if (gpsStatus == 1) {  // Fresh GPS
-      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
-      Serial.println("✅ Fresh GPS acquired - counter reset");
-      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
-    } else {  // No GPS at all
-      GPSData cachedGPS;
-      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
-      smsSent = sendNoLocationSMS(config.phoneNumber, false, hasCached, cachedGPS, config.updateInterval);
-    }
+    // Send SMS with GPS fallback logic (userPresent=false for timer wake)
+    sendSMSWithGPSFallback(
+      config.phoneNumber,
+      false,  // userPresent = false (no IR check during timer wake)
+      config.updateInterval,
+      currentGPS,
+      gpsStatus
+    );
 
     isTimerWake = false;
 

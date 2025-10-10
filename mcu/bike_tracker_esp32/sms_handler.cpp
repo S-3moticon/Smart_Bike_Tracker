@@ -334,7 +334,20 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
 
 /*
  * Send SMS when GPS location cannot be acquired
- * Sends alert with status and last known location if available
+ *
+ * Sends alert indicating GPS is unavailable. Includes last known location if available,
+ * with clear indication that it may be outdated. Used when:
+ * - GPS acquisition completely fails (GPS_NONE)
+ * - Cached GPS limit reached (CACHED_GPS_LIMIT consecutive cached sends)
+ *
+ * Uses char buffer instead of String to avoid heap fragmentation.
+ *
+ * @param phoneNumber    Phone number to send SMS to
+ * @param userPresent    Whether IR sensor detects user presence
+ * @param hasCachedGPS   Whether valid cached GPS data exists
+ * @param cachedGPS      Last known GPS data (may be outdated)
+ * @param updateInterval SMS update interval in seconds
+ * @return true if SMS sent successfully, false otherwise
  */
 bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCachedGPS, const GPSData& cachedGPS, uint16_t updateInterval) {
   Serial.println("📱 Sending no-location alert SMS...");
@@ -345,29 +358,38 @@ bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCach
   enableRF();
   delay(1000);
 
-  String message;
-  message.reserve(256);
-  message = "ALERT: Bike disconnected\n";
-  message += "GPS UNAVAILABLE\n";
-  message += "Unable to acquire fresh location\n\n";
+  // Use char buffer to avoid String heap fragmentation
+  static char message[300];
+  int offset = 0;
+
+  offset += snprintf(message + offset, sizeof(message) - offset,
+                    "ALERT: Bike disconnected\n"
+                    "GPS UNAVAILABLE\n"
+                    "Unable to acquire fresh location\n\n");
 
   if (hasCachedGPS && cachedGPS.valid) {
-    message += "Last known location:\n";
-    message += "geo:" + cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
-    message += cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
-    message += "(Location outdated - no fresh GPS)\n\n";
+    offset += snprintf(message + offset, sizeof(message) - offset,
+                      "Last known location:\n"
+                      "geo:%s,%s\n"
+                      "%s,%s\n"
+                      "(Location outdated - no fresh GPS)\n\n",
+                      cachedGPS.latitude.c_str(), cachedGPS.longitude.c_str(),
+                      cachedGPS.latitude.c_str(), cachedGPS.longitude.c_str());
   } else {
-    message += "No location data available\n";
-    message += "GPS has never acquired a fix\n\n";
+    offset += snprintf(message + offset, sizeof(message) - offset,
+                      "No location data available\n"
+                      "GPS has never acquired a fix\n\n");
   }
 
-  message += "Device Status:\n";
-  message += "User: ";
-  message += userPresent ? "Present" : "Away";
-  message += "\nGPS: Failed to acquire";
-  message += "\nSMS Interval: " + String(updateInterval) + " sec";
+  offset += snprintf(message + offset, sizeof(message) - offset,
+                    "Device Status:\n"
+                    "User: %s\n"
+                    "GPS: Failed to acquire\n"
+                    "SMS Interval: %d sec",
+                    userPresent ? "Present" : "Away",
+                    updateInterval);
 
-  bool result = sendSMS(phoneNumber, message);
+  bool result = sendSMS(phoneNumber, String(message));
 
   // After SMS, disable RF to save power
   Serial.println("📡 Disabling RF after SMS...");
