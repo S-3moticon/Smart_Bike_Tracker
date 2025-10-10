@@ -385,63 +385,108 @@ void sendGPSHistoryPage(int page) {
   pHistoryChar->notify();
 }
 
+/*
+ * Acquire GPS with fallback to cached data
+ * Returns: 0 = no valid GPS, 1 = fresh GPS acquired, 2 = using cached GPS
+ */
+int acquireGPSWithFallback(GPSData& gpsData, uint32_t maxAttempts) {
+  unsigned long currentTime = millis();
+
+  // Try to acquire fresh GPS
+  DEBUG_PRINT("📍 Attempting GPS acquisition...\n");
+  if (acquireGPSFix(gpsData, maxAttempts)) {
+    status.lastGPSTime = currentTime;
+    saveGPSData(gpsData);
+    if (logGPSPoint(gpsData, 2)) {
+      Serial.printf("📍 Fresh GPS logged at index %d (total: %d)\n",
+                    (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
+      delay(50);  // Allow NVS write to complete
+    }
+    return 1;  // Fresh GPS
+  }
+
+  // GPS acquisition failed - try to load cached data
+  Serial.println("⚠️ GPS acquisition failed, checking cached data...");
+  if (loadGPSData(gpsData) && gpsData.valid) {
+    unsigned long gpsCacheAge = currentTime - status.lastGPSTime;
+    // Accept cached GPS if less than 30 minutes old
+    if (gpsCacheAge < GPS_CACHE_TIMEOUT) {
+      Serial.printf("📍 Using cached GPS (age: %lu seconds)\n", gpsCacheAge / 1000);
+      return 2;  // Cached GPS
+    } else {
+      Serial.printf("⚠️ Cached GPS too old (%lu seconds)\n", gpsCacheAge / 1000);
+    }
+  }
+
+  Serial.println("❌ No valid GPS data available");
+  return 0;  // No valid GPS
+}
+
 bool handleDisconnectedSMS() {
   if (strlen(config.phoneNumber) == 0 || !config.alertEnabled) return false;
-  
+
   unsigned long currentTime = millis();
   unsigned long intervalMillis = config.updateInterval * 1000;
-  
+
+  // Handle motion wake SMS (first disconnect after motion detected)
   if (motionWakeNeedsSMS) {
     stopBLEAdvertising();
-    bool gpsValid = currentGPS.valid && (currentTime - status.lastGPSTime < GPS_CACHE_TIMEOUT);
-    if (!gpsValid) {
-      gpsValid = acquireGPSFix(currentGPS, 30);
-      if (gpsValid) {
-        status.lastGPSTime = currentTime;
-        saveGPSData(currentGPS);
-        if (logGPSPoint(currentGPS, 2)) {
-          Serial.printf("📍 Motion wake GPS logged at index %d (total: %d)\n", 
-                        (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
-          delay(50);  // Allow NVS write to complete
-        }
-      }
+    Serial.println("📱 Motion wake - acquiring GPS for disconnect alert");
+
+    // Try to acquire GPS with fallback
+    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+
+    bool smsSent = false;
+    if (gpsStatus > 0) {
+      // GPS available (fresh or cached)
+      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
+    } else {
+      // No valid GPS - send no-location alert
+      GPSData cachedGPS;
+      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
+      smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
     }
-    if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
+
+    if (smsSent) {
       disconnectSMSSent = true;
       lastDisconnectSMS = currentTime;
       motionWakeNeedsSMS = false;
       return true;
     }
+    return false;
   }
-  
+
+  // Handle periodic SMS (regular motion detection or periodic interval)
   bool shouldSend = (!disconnectSMSSent && motionSensor.detectMotion()) ||
                     (disconnectSMSSent && (currentTime - lastDisconnectSMS >= intervalMillis));
-  
+
   if (shouldSend) {
     stopBLEAdvertising();
     if (!isSIM7070GInitialized() && !initializeSIM7070G()) return false;
-    
-    bool gpsValid = currentGPS.valid && (currentTime - status.lastGPSTime < GPS_CACHE_TIMEOUT);
-    if (!gpsValid) {
-      gpsValid = acquireGPSFix(currentGPS, 30);
-      if (gpsValid) {
-        status.lastGPSTime = currentTime;
-        saveGPSData(currentGPS);
-        if (logGPSPoint(currentGPS, 2)) {
-          Serial.printf("📍 Periodic GPS logged at index %d (total: %d)\n", 
-                        (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
-          delay(50);  // Allow NVS write to complete
-        }
-      }
+
+    Serial.println("📱 Periodic update - acquiring GPS");
+
+    // Try to acquire GPS with fallback
+    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+
+    bool smsSent = false;
+    if (gpsStatus > 0) {
+      // GPS available (fresh or cached)
+      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
+    } else {
+      // No valid GPS - send no-location alert
+      GPSData cachedGPS;
+      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
+      smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
     }
-    
-    if (sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval)) {
+
+    if (smsSent) {
       disconnectSMSSent = true;
       lastDisconnectSMS = currentTime;
       return true;
     }
   }
-  
+
   return false;
 }
 
@@ -535,9 +580,21 @@ void enterSleepMode() {
     }
     
   } else {
-    unsigned long timeUntilNextSMS = config.updateInterval * 1000 - (millis() - lastDisconnectSMS);
-    if (timeUntilNextSMS < 1000) timeUntilNextSMS = config.updateInterval * 1000;
-    
+    // Calculate time until next SMS (prevent unsigned underflow)
+    unsigned long timeSinceLastSMS = millis() - lastDisconnectSMS;
+    unsigned long intervalMillis = config.updateInterval * 1000UL;
+    unsigned long timeUntilNextSMS;
+
+    if (timeSinceLastSMS >= intervalMillis) {
+      // Already past interval - use full interval
+      timeUntilNextSMS = intervalMillis;
+    } else {
+      // Calculate remaining time
+      timeUntilNextSMS = intervalMillis - timeSinceLastSMS;
+    }
+
+    // Ensure minimum sleep time of 1 second
+    if (timeUntilNextSMS < 1000) timeUntilNextSMS = intervalMillis;
 
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     if (motionSensorInitialized) motionSensor.setPowerDownMode();
@@ -646,6 +703,13 @@ void setup() {
       Serial.println("Wake: MOTION (GPIO)");
       lastMotionTime = millis();
       if (disconnectSMSSent) lastDisconnectSMS = 0;
+      // Initialize SIM7070G for GPS acquisition after motion wake
+      if (motionWakeNeedsSMS) {
+        Serial.println("📡 Motion wake - initializing SIM7070G for GPS acquisition");
+        if (!initializeSIM7070G()) {
+          Serial.println("❌ SIM7070G init failed on motion wake");
+        }
+      }
       break;
     case ESP_SLEEP_WAKEUP_TIMER:
       Serial.println("Wake: TIMER");
@@ -668,25 +732,31 @@ void setup() {
   if (isTimerWake && hasValidConfig) {
     stopBLEAdvertising();
     Serial.println("📍 Timer wake - acquiring GPS for periodic update");
-    
-    if (acquireGPSFix(currentGPS, 30)) {
-      saveGPSData(currentGPS);
-      // Log GPS point and ensure it's committed to NVS
-      if (logGPSPoint(currentGPS, 2)) {
-        Serial.printf("📍 GPS logged successfully at index %d (total: %d)\n", 
-                      (logIndex - 1 + MAX_GPS_HISTORY) % MAX_GPS_HISTORY, logCount);
-      }
-    } else {
-      loadGPSData(currentGPS);
-      Serial.println("⚠️ GPS acquisition failed, using cached data");
+
+    // Initialize SIM7070G for GPS acquisition
+    if (!initializeSIM7070G()) {
+      Serial.println("❌ SIM7070G init failed on timer wake");
     }
-    
-    sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
+
+    // Try to acquire GPS with fallback
+    int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
+
+    bool smsSent = false;
+    if (gpsStatus > 0) {
+      // GPS available (fresh or cached)
+      smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
+    } else {
+      // No valid GPS - send no-location alert
+      GPSData cachedGPS;
+      bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
+      smsSent = sendNoLocationSMS(config.phoneNumber, false, hasCached, cachedGPS, config.updateInterval);
+    }
+
     isTimerWake = false;
-    
+
     // Allow time for NVS writes to complete
     delay(100);
-    
+
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_sleep_enable_timer_wakeup(config.updateInterval * 1000000ULL);
     esp_deep_sleep_start();

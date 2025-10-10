@@ -295,11 +295,9 @@ bool sendLocationSMS(const String& phoneNumber, const GPSData& gpsData, AlertTyp
  * Includes GPS location, user presence, and SMS interval
  */
 bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool userPresent, uint16_t updateInterval) {
-  if (!gpsData.valid) {
-    Serial.println("⚠️ Invalid GPS data, cannot send location SMS");
-    return false;
-  }
-  
+  // Note: GPS validity should be checked before calling this function
+  // Use sendNoLocationSMS() for cases where GPS is unavailable
+
   // CRITICAL: Enable RF for SMS operation (GPS and SMS share RF)
   // First disable GPS if it was on
   disableGNSSPower();
@@ -331,6 +329,49 @@ bool sendDisconnectSMS(const String& phoneNumber, const GPSData& gpsData, bool u
   Serial.println("📡 Disabling RF after SMS...");
   disableRF();
   
+  return result;
+}
+
+/*
+ * Send SMS when GPS location cannot be acquired
+ * Sends alert with status and last known location if available
+ */
+bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCachedGPS, const GPSData& cachedGPS, uint16_t updateInterval) {
+  Serial.println("📱 Sending no-location alert SMS...");
+
+  // CRITICAL: Enable RF for SMS operation
+  disableGNSSPower();
+  delay(500);
+  enableRF();
+  delay(1000);
+
+  String message;
+  message.reserve(256);
+  message = "ALERT: Bike disconnected\n";
+  message += "GPS UNAVAILABLE\n\n";
+
+  if (hasCachedGPS && cachedGPS.valid) {
+    message += "Last known location:\n";
+    message += "geo:" + cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
+    message += cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
+    message += "(Location may be outdated)\n\n";
+  } else {
+    message += "No location data available\n";
+    message += "GPS has never acquired a fix\n\n";
+  }
+
+  message += "Device Status:\n";
+  message += "User: ";
+  message += userPresent ? "Present" : "Away";
+  message += "\nGPS: Failed to acquire";
+  message += "\nSMS Interval: " + String(updateInterval) + " sec";
+
+  bool result = sendSMS(phoneNumber, message);
+
+  // After SMS, disable RF to save power
+  Serial.println("📡 Disabling RF after SMS...");
+  disableRF();
+
   return result;
 }
 
