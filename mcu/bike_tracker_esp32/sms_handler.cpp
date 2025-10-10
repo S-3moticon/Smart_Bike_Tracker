@@ -359,35 +359,52 @@ bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCach
   delay(1000);
 
   // Use char buffer to avoid String heap fragmentation
-  static char message[300];
+  // Keep message under 160 chars to fit in single SMS
+  static char message[160];
   int offset = 0;
 
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                    "ALERT: Bike disconnected\n"
-                    "GPS UNAVAILABLE\n"
-                    "Unable to acquire fresh location\n\n");
-
   if (hasCachedGPS && cachedGPS.valid) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                      "Last known location:\n"
-                      "geo:%s,%s\n"
-                      "%s,%s\n"
-                      "(Location outdated - no fresh GPS)\n\n",
-                      cachedGPS.latitude.c_str(), cachedGPS.longitude.c_str(),
-                      cachedGPS.latitude.c_str(), cachedGPS.longitude.c_str());
+    // Validate GPS strings before using them
+    const char* lat = cachedGPS.latitude.c_str();
+    const char* lon = cachedGPS.longitude.c_str();
+
+    // Check if coordinates are valid (not empty and not "0.000000")
+    if (lat && lon && strlen(lat) > 0 && strlen(lon) > 0 &&
+        strcmp(lat, "0.000000") != 0 && strcmp(lon, "0.000000") != 0) {
+      // Compact format with last known location
+      offset += snprintf(message + offset, sizeof(message) - offset,
+                        "ALERT: GPS FAIL\n"
+                        "Last known:\n"
+                        "geo:%s,%s\n"
+                        "(OUTDATED)\n"
+                        "User:%s Int:%ds",
+                        lat, lon,
+                        userPresent ? "Yes" : "No",
+                        updateInterval);
+      Serial.printf("🗺️ Including cached GPS: %s, %s\n", lat, lon);
+    } else {
+      Serial.println("⚠️ Cached GPS coordinates invalid, skipping");
+      offset += snprintf(message + offset, sizeof(message) - offset,
+                        "ALERT: GPS FAIL\n"
+                        "No location available\n"
+                        "GPS never acquired\n"
+                        "User:%s Int:%ds",
+                        userPresent ? "Yes" : "No",
+                        updateInterval);
+    }
   } else {
+    // No cached GPS at all
     offset += snprintf(message + offset, sizeof(message) - offset,
-                      "No location data available\n"
-                      "GPS has never acquired a fix\n\n");
+                      "ALERT: GPS FAIL\n"
+                      "No location available\n"
+                      "GPS never acquired\n"
+                      "User:%s Int:%ds",
+                      userPresent ? "Yes" : "No",
+                      updateInterval);
   }
 
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                    "Device Status:\n"
-                    "User: %s\n"
-                    "GPS: Failed to acquire\n"
-                    "SMS Interval: %d sec",
-                    userPresent ? "Present" : "Away",
-                    updateInterval);
+  Serial.printf("📝 SMS message length: %d bytes\n", offset);
+  Serial.printf("📄 SMS content:\n%s\n", message);
 
   bool result = sendSMS(phoneNumber, String(message));
 
