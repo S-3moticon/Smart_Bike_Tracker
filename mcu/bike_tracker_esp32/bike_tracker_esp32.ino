@@ -113,6 +113,7 @@ RTC_DATA_ATTR unsigned long lastDisconnectSMS = 0;
 RTC_DATA_ATTR bool isTimerWake = false;
 RTC_DATA_ATTR bool motionWakeNeedsSMS = false;
 RTC_DATA_ATTR bool motionSensorInitialized = false;
+RTC_DATA_ATTR int consecutiveCachedGPS = 0;  // Track consecutive cached GPS sends
 
 // External RTC variables from gps_handler.cpp
 extern RTC_DATA_ATTR int logIndex;
@@ -437,11 +438,26 @@ bool handleDisconnectedSMS() {
     int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
 
     bool smsSent = false;
-    if (gpsStatus > 0) {
-      // GPS available (fresh or cached)
+
+    // Check if we've sent cached GPS too many times
+    if (gpsStatus == 2) {  // Cached GPS
+      consecutiveCachedGPS++;
+      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
+
+      if (consecutiveCachedGPS >= 3) {
+        // Too many cached sends - treat as no GPS
+        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
+        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
+        smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, true, cachedGPS, config.updateInterval);
+      } else {
+        // Still within limit - send cached location
+        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
+      }
+    } else if (gpsStatus == 1) {  // Fresh GPS
+      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
+      Serial.println("✅ Fresh GPS acquired - counter reset");
       smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-    } else {
-      // No valid GPS - send no-location alert
+    } else {  // No GPS at all
       GPSData cachedGPS;
       bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
       smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
@@ -470,11 +486,26 @@ bool handleDisconnectedSMS() {
     int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
 
     bool smsSent = false;
-    if (gpsStatus > 0) {
-      // GPS available (fresh or cached)
+
+    // Check if we've sent cached GPS too many times
+    if (gpsStatus == 2) {  // Cached GPS
+      consecutiveCachedGPS++;
+      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
+
+      if (consecutiveCachedGPS >= 3) {
+        // Too many cached sends - treat as no GPS
+        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
+        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
+        smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, true, cachedGPS, config.updateInterval);
+      } else {
+        // Still within limit - send cached location
+        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
+      }
+    } else if (gpsStatus == 1) {  // Fresh GPS
+      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
+      Serial.println("✅ Fresh GPS acquired - counter reset");
       smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, status.userPresent, config.updateInterval);
-    } else {
-      // No valid GPS - send no-location alert
+    } else {  // No GPS at all
       GPSData cachedGPS;
       bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
       smsSent = sendNoLocationSMS(config.phoneNumber, status.userPresent, hasCached, cachedGPS, config.updateInterval);
@@ -723,6 +754,7 @@ void setup() {
       isTimerWake = false;
       motionWakeNeedsSMS = false;
       motionSensorInitialized = false;
+      consecutiveCachedGPS = 0;  // Reset cached GPS counter on boot
   }
   
   pinMode(IR_SENSOR_PIN, INPUT);
@@ -742,11 +774,26 @@ void setup() {
     int gpsStatus = acquireGPSWithFallback(currentGPS, 30);  // 30 attempts = ~1 minute
 
     bool smsSent = false;
-    if (gpsStatus > 0) {
-      // GPS available (fresh or cached)
+
+    // Check if we've sent cached GPS too many times
+    if (gpsStatus == 2) {  // Cached GPS
+      consecutiveCachedGPS++;
+      Serial.printf("⚠️ Using cached GPS (%d/3 consecutive)\n", consecutiveCachedGPS);
+
+      if (consecutiveCachedGPS >= 3) {
+        // Too many cached sends - treat as no GPS
+        Serial.println("❌ Cached GPS limit reached - sending no-location alert");
+        GPSData cachedGPS = currentGPS;  // Keep last cached for reference
+        smsSent = sendNoLocationSMS(config.phoneNumber, false, true, cachedGPS, config.updateInterval);
+      } else {
+        // Still within limit - send cached location
+        smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
+      }
+    } else if (gpsStatus == 1) {  // Fresh GPS
+      consecutiveCachedGPS = 0;  // Reset counter on fresh GPS
+      Serial.println("✅ Fresh GPS acquired - counter reset");
       smsSent = sendDisconnectSMS(config.phoneNumber, currentGPS, false, config.updateInterval);
-    } else {
-      // No valid GPS - send no-location alert
+    } else {  // No GPS at all
       GPSData cachedGPS;
       bool hasCached = loadGPSData(cachedGPS) && cachedGPS.valid;
       smsSent = sendNoLocationSMS(config.phoneNumber, false, hasCached, cachedGPS, config.updateInterval);
@@ -827,6 +874,7 @@ void loop() {
     } else {
       ensureMotionSensorInit();
       if (!isTimerWake) disconnectSMSSent = false;
+      consecutiveCachedGPS = 0;  // Reset cached GPS counter on BLE reconnect
       updateStatusCharacteristic();
       if (motionSensorInitialized) motionSensor.setLowPowerMode();
     }

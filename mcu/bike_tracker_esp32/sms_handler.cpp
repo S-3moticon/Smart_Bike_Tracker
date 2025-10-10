@@ -348,13 +348,14 @@ bool sendNoLocationSMS(const String& phoneNumber, bool userPresent, bool hasCach
   String message;
   message.reserve(256);
   message = "ALERT: Bike disconnected\n";
-  message += "GPS UNAVAILABLE\n\n";
+  message += "GPS UNAVAILABLE\n";
+  message += "Unable to acquire fresh location\n\n";
 
   if (hasCachedGPS && cachedGPS.valid) {
     message += "Last known location:\n";
     message += "geo:" + cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
     message += cachedGPS.latitude + "," + cachedGPS.longitude + "\n";
-    message += "(Location may be outdated)\n\n";
+    message += "(Location outdated - no fresh GPS)\n\n";
   } else {
     message += "No location data available\n";
     message += "GPS has never acquired a fix\n\n";
