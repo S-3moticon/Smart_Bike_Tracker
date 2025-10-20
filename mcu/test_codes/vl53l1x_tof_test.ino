@@ -24,6 +24,10 @@
 #define USER_PRESENT_MM 800   // User detected if < 800mm
 #define USER_AWAY_MM 1000     // User away if > 1000mm
 
+// Distance validation limits (mm)
+#define MIN_VALID_DISTANCE_MM 40    // Sensor minimum reliable distance
+#define MAX_VALID_DISTANCE_MM 1000  // Short mode maximum range
+
 // Sensor object
 SFEVL53L1X sensor;
 
@@ -40,7 +44,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // XSHUT pin (power control)
+  // XSHUT pin (power control)does
   pinMode(SHUTDOWN_PIN, OUTPUT);
   digitalWrite(SHUTDOWN_PIN, HIGH);
   delay(10);
@@ -96,7 +100,7 @@ void testBasicDetection() {
     byte status = sensor.getRangeStatus();
     count++;
 
-    if (status == 0) {  // Valid measurement
+    if (status == 0 && distance >= MIN_VALID_DISTANCE_MM && distance <= MAX_VALID_DISTANCE_MM) {
       bool state = (distance < USER_PRESENT_MM) ? true :
                    (distance > USER_AWAY_MM) ? false : lastState;
 
@@ -133,7 +137,7 @@ void testInterruptMode() {
       byte status = sensor.getRangeStatus();
       count++;
 
-      if (status == 0) {
+      if (status == 0 && distance >= MIN_VALID_DISTANCE_MM && distance <= MAX_VALID_DISTANCE_MM) {
         bool state = (distance < USER_PRESENT_MM) ? true :
                      (distance > USER_AWAY_MM) ? false : lastState;
 
@@ -233,7 +237,7 @@ void loop() {
     byte status = sensor.getRangeStatus();
     bool prevState = userPresent;
 
-    if (status == 0) {  // Valid
+    if (status == 0 && distance >= MIN_VALID_DISTANCE_MM && distance <= MAX_VALID_DISTANCE_MM) {
       if (distance < USER_PRESENT_MM) userPresent = true;
       else if (distance > USER_AWAY_MM) userPresent = false;
     }
