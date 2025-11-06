@@ -46,3 +46,6 @@ app.*.map.json
 
 # user rule
 /req/
+/CLAUDE.md
+/PLAN.md
+/REFACTORING_SUMMARY.md
