@@ -46,4 +46,4 @@ app.*.map.json
 
 # user rule
 /req/
-
+/mcu/
