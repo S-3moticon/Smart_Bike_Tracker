@@ -24,9 +24,15 @@
 #include "gps_handler.h"
 #include "sms_handler.h"
 #include "lsm6dsl_handler.h"
+#include <Wire.h>
+#include "SparkFun_VL53L1X.h"
+SFEVL53L1X tof; 
+enum{_IDLE,MEAS} s=_IDLE; 
+const uint16_t TB=20; 
+const uint32_t PERIOD=1000; 
+uint32_t tNext=0;
 
 // Constants
-#define IR_SENSOR_PIN 3
 #define BOOT_BLE_GRACE_PERIOD 30000
 #define STATUS_UPDATE_INTERVAL 5000
 #define IR_POLL_INTERVAL 250
@@ -61,6 +67,9 @@ enum GPSStatus {
 // JSON buffer sizes
 #define STATUS_JSON_SIZE        256
 #define CONFIG_PHONE_MAX_LEN    20
+
+int _distance = 0;
+bool _near = false;
 
 // Global Variables
 BLEServer* pServer = nullptr;
@@ -154,7 +163,7 @@ class ServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) override {
       deviceConnected = true;
       status.bleConnected = true;
-      status.userPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
+      status.userPresent = (_near == HIGH);
       updateStatusCharacteristic();
       
       delay(500);
@@ -306,7 +315,7 @@ void parseConfigJSON(const String& json) {
 // Sensor Functions
 inline void readIRSensor() {
   static bool lastUserPresent = false;
-  bool currentUserPresent = (digitalRead(IR_SENSOR_PIN) == LOW);
+  bool currentUserPresent = (_near == HIGH);
   
   if (currentUserPresent != lastUserPresent) {
     status.userPresent = currentUserPresent;
@@ -510,6 +519,9 @@ bool handleDisconnectedSMS() {
     stopBLEAdvertising();
     Serial.println("📱 Motion wake - acquiring GPS for disconnect alert");
 
+    // Update user presence before sending SMS
+    readIRSensor();
+
     // Try to acquire GPS with fallback
     GPSStatus gpsStatus = acquireGPSWithFallback(currentGPS, GPS_ACQUISITION_ATTEMPTS);
 
@@ -540,6 +552,9 @@ bool handleDisconnectedSMS() {
     if (!isSIM7070GInitialized() && !initializeSIM7070G()) return false;
 
     Serial.println("📱 Periodic update - acquiring GPS");
+
+    // Update user presence before sending SMS
+    readIRSensor();
 
     // Try to acquire GPS with fallback
     GPSStatus gpsStatus = acquireGPSWithFallback(currentGPS, GPS_ACQUISITION_ATTEMPTS);
@@ -628,6 +643,10 @@ void enterSleepMode() {
   if (!disconnectSMSSent) {
     // First disconnect - wake on motion only (DEEP sleep)
     if (motionSensorInitialized) {
+      // Stop ToF to release I2C bus before sleep
+      tof.stopRanging();
+      delay(50);
+
       // Calculate sensitive threshold for wake interrupts (0.05g to 0.28g range)
       float wakeThreshold = WAKE_THRESHOLD_MAX - (config.motionSensitivity * WAKE_THRESHOLD_RANGE);
       motionSensor.configureWakeOnMotion(wakeThreshold);
@@ -668,6 +687,10 @@ void enterSleepMode() {
 
     // Ensure minimum sleep time of 1 second
     if (timeUntilNextSMS < 1000) timeUntilNextSMS = intervalMillis;
+
+    // Stop ToF to release I2C bus before sleep
+    tof.stopRanging();
+    delay(50);
 
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     if (motionSensorInitialized) motionSensor.setPowerDownMode();
@@ -761,7 +784,9 @@ void testGPSAndSMS() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  
+  Wire.begin(6,7);
+  if(tof.begin()!=0) while(1);
+  tof.setDistanceModeShort(); tof.setTimingBudgetInMs(TB);
   esp_err_t ret = nvs_flash_init();
   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     nvs_flash_erase();
@@ -798,8 +823,7 @@ void setup() {
       motionSensorInitialized = false;
       consecutiveCachedGPS = 0;  // Reset cached GPS counter on boot
   }
-  
-  pinMode(IR_SENSOR_PIN, INPUT);
+
   loadConfiguration();
   bool hasValidConfig = (strlen(config.phoneNumber) > 0 && config.alertEnabled);
   
@@ -871,7 +895,24 @@ void ensureMotionSensorInit() {
 }
 
 // Main Loop
-void loop() {
+void loop() 
+{
+  uint32_t _now=millis();
+  if(s==_IDLE && (int32_t)(_now-tNext)>=0){ tof.startRanging(); s=MEAS; }
+  if(s==MEAS && tof.checkForDataReady())
+  {
+    _distance = tof.getDistance(); 
+    if (_distance < 600)
+    {
+      _near = HIGH;
+    }
+    if (_distance >= 600)
+    {
+      _near = LOW;
+    }
+    Serial.println(_distance); tof.clearInterrupt(); tof.stopRanging();
+    tNext=_now+PERIOD; s=_IDLE;
+  }
   static unsigned long lastStatusUpdate = 0;
   static unsigned long lastIRCheck = 0;
   unsigned long currentTime = millis();
